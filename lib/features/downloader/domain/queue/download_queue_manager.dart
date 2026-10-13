@@ -286,28 +286,27 @@ class DownloadQueueManager {
       finalFile = File(finalPath);
       tempFile = File(tempPath);
 
-      int existingBytes = 0;
       if (await tempFile.exists()) {
-        existingBytes = await tempFile.length();
+        try {
+          await tempFile.delete();
+        } catch (_) {}
       }
 
-      sink = tempFile.openWrite(
-        mode: existingBytes > 0 ? FileMode.writeOnlyAppend : FileMode.writeOnly,
-      );
+      sink = tempFile.openWrite(mode: FileMode.writeOnly);
 
       // Update total bytes if known
       final currentIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (currentIndex >= 0) {
         _tasks[currentIndex] = _tasks[currentIndex].copyWith(
-          totalBytes: totalBytes > 0 ? totalBytes : existingBytes + totalBytes,
+          totalBytes: totalBytes,
           savedPath: finalPath,
         );
         _notifyListeners();
       }
 
       // 3. Pipe stream into file with throttled metrics calculation
-      int downloadedBytes = existingBytes;
-      int lastDownloadedBytes = downloadedBytes;
+      int downloadedBytes = 0;
+      int lastDownloadedBytes = 0;
       DateTime lastSpeedCheck = DateTime.now();
       DateTime lastNotificationUpdate = DateTime.now();
       double currentSpeed = 0.0;
