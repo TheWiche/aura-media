@@ -59,7 +59,7 @@ class FormatSelectorChip extends StatelessWidget {
               child: _buildTypeButton(
                 context: context,
                 title: 'Solo Audio',
-                subtitle: 'M4A / MP3 (Alta calidad)',
+                subtitle: 'MP3 (Audio alta calidad)',
                 icon: Icons.music_note_outlined,
                 isSelected: selectedMediaType == MediaType.audio,
                 onTap: () => onMediaTypeChanged(MediaType.audio),

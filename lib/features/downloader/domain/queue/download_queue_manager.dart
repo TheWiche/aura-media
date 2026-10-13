@@ -245,28 +245,10 @@ class DownloadQueueManager {
     File? finalFile;
 
     try {
-      // 1. Prepare target file paths
-      final sanitizedTitle = Formatters.sanitizeFileName(task.title);
-      final finalFileName = '$sanitizedTitle.${task.fileExtension}';
-      final finalPath = await _storageService.getTargetPath(finalFileName);
-      final tempPath = '$finalPath.tmp';
-
-      finalFile = File(finalPath);
-      tempFile = File(tempPath);
-
-      // Support resuming partial file if already exists
-      int existingBytes = 0;
-      if (await tempFile.exists()) {
-        existingBytes = await tempFile.length();
-      }
-
-      sink = tempFile.openWrite(
-        mode: existingBytes > 0 ? FileMode.writeOnlyAppend : FileMode.writeOnly,
-      );
-
-      // 2. Resolve Stream
+      // 1. Resolve Stream
       Stream<List<int>> stream;
       int totalBytes = task.totalBytes;
+      String effectiveExtension = task.fileExtension;
 
       if (YoutubeExtractor.isYoutubeUrl(task.url)) {
         final resolved = await _youtubeExtractor.resolveStream(
@@ -276,21 +258,42 @@ class DownloadQueueManager {
         );
         stream = resolved.stream;
         totalBytes = resolved.totalBytes;
+        if (resolved.extension.isNotEmpty) {
+          effectiveExtension = resolved.extension;
+        }
       } else {
         final genericResult = await _genericExtractor.resolveStream(
           url: task.url,
           mediaType: task.mediaType,
         );
         totalBytes = genericResult.totalBytes;
+        if (genericResult.extension.isNotEmpty) {
+          effectiveExtension = genericResult.extension;
+        }
 
         final httpClient = http.Client();
         final request = http.Request('GET', Uri.parse(genericResult.streamUrl));
-        if (existingBytes > 0) {
-          request.headers['Range'] = 'bytes=$existingBytes-';
-        }
         final response = await httpClient.send(request);
         stream = response.stream;
       }
+
+      // 2. Prepare target file paths with correct extension
+      final sanitizedTitle = Formatters.sanitizeFileName(task.title);
+      final finalFileName = '$sanitizedTitle.$effectiveExtension';
+      final finalPath = await _storageService.getTargetPath(finalFileName);
+      final tempPath = '$finalPath.tmp';
+
+      finalFile = File(finalPath);
+      tempFile = File(tempPath);
+
+      int existingBytes = 0;
+      if (await tempFile.exists()) {
+        existingBytes = await tempFile.length();
+      }
+
+      sink = tempFile.openWrite(
+        mode: existingBytes > 0 ? FileMode.writeOnlyAppend : FileMode.writeOnly,
+      );
 
       // Update total bytes if known
       final currentIndex = _tasks.indexWhere((t) => t.id == task.id);

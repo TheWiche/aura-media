@@ -116,7 +116,7 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
 
     final taskId = _uuid.v4();
     final notifId = taskId.hashCode.abs() % 100000;
-    final extension = event.mediaType == MediaType.audio ? 'm4a' : 'mp4';
+    final extension = event.mediaType == MediaType.audio ? 'mp3' : 'mp4';
     final title = event.metadata?.title ?? 'Descarga_${DateTime.now().millisecondsSinceEpoch}';
 
     final task = DownloadTask(
