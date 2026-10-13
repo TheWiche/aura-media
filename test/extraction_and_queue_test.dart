@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:medias_download/core/services/share_intent_service.dart';
 import 'package:medias_download/core/utils/formatters.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
 import 'package:medias_download/features/downloader/data/datasources/youtube_extractor.dart';
@@ -32,6 +33,30 @@ void main() {
       expect(
         YoutubeExtractor.extractVideoId('https://www.youtube.com/embed/dQw4w9WgXcQ'),
         'dQw4w9WgXcQ',
+      );
+    });
+
+    test('cleanUrl canonicalizes URLs and cleans query junk', () {
+      expect(
+        YoutubeExtractor.cleanUrl('https://youtu.be/dQw4w9WgXcQ?si=tracking123&feature=share'),
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      );
+      expect(
+        YoutubeExtractor.cleanUrl('https://www.youtube.com/shorts/dQw4w9WgXcQ'),
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      );
+    });
+
+    test('ShareIntentService extracts clean YouTube URL from rich shared text', () {
+      expect(
+        ShareIntentService.extractUrlFromText(
+          'Mira este video: Never Gonna Give You Up https://youtu.be/dQw4w9WgXcQ?si=track789 compartido desde YouTube',
+        ),
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      );
+      expect(
+        ShareIntentService.extractUrlFromText('https://example.com/media/file.mp4'),
+        'https://example.com/media/file.mp4',
       );
     });
 

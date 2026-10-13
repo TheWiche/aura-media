@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/settings_service.dart';
+import '../../data/datasources/youtube_extractor.dart';
 import '../../data/models/download_task.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_event.dart';
@@ -12,20 +14,34 @@ import '../widgets/media_preview_card.dart';
 
 class HomeTab extends StatefulWidget {
   final VoidCallback onNavigateToQueue;
+  final String? initialUrl;
 
   const HomeTab({
     super.key,
     required this.onNavigateToQueue,
+    this.initialUrl,
   });
 
   @override
-  State<HomeTab> createState() => _HomeTabState();
+  State<HomeTab> createState() => HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> {
+class HomeTabState extends State<HomeTab> {
   final TextEditingController _urlController = TextEditingController();
   MediaType _selectedMediaType = MediaType.video;
-  VideoQuality _selectedQuality = VideoQuality.best;
+  late VideoQuality _selectedQuality;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedQuality = SettingsService.instance.getDefaultQuality();
+
+    if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        handleIncomingUrl(widget.initialUrl!);
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -33,11 +49,21 @@ class _HomeTabState extends State<HomeTab> {
     super.dispose();
   }
 
+  /// Called externally by ShareIntentService or internal shortcuts
+  void handleIncomingUrl(String url) {
+    final clean = YoutubeExtractor.cleanUrl(url);
+    _urlController.text = clean;
+    if (mounted) {
+      setState(() {});
+      _fetchMetadata();
+    }
+  }
+
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data?.text != null && data!.text!.trim().isNotEmpty) {
-      _urlController.text = data.text!.trim();
-      _fetchMetadata();
+    final text = data?.text?.trim();
+    if (text != null && text.isNotEmpty) {
+      handleIncomingUrl(text);
     }
   }
 
@@ -103,7 +129,7 @@ class _HomeTabState extends State<HomeTab> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Pega un enlace de YouTube para extraer video o audio de alta fidelidad.',
+                'Pega un enlace de YouTube o comparte directamente desde la app para extraer video o audio.',
                 style: GoogleFonts.outfit(
                   fontSize: 14,
                   color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
@@ -187,24 +213,27 @@ class _HomeTabState extends State<HomeTab> {
 
               const SizedBox(height: 12),
 
-              // ── Analyze button ─────────────────────────────────────────────
-              OutlinedButton.icon(
+              // ── Analyze button with interactive scale ──────────────────────
+              _ScaleBounceButton(
                 onPressed: state.isLoadingMetadata ? null : _fetchMetadata,
-                icon: state.isLoadingMetadata
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
-                      )
-                    : const Icon(Icons.search_rounded, size: 18),
-                label: Text(
-                  state.isLoadingMetadata ? 'Analizando enlace...' : 'Analizar enlace',
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  side: BorderSide(
-                    color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                child: OutlinedButton.icon(
+                  onPressed: state.isLoadingMetadata ? null : _fetchMetadata,
+                  icon: state.isLoadingMetadata
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                        )
+                      : const Icon(Icons.search_rounded, size: 18),
+                  label: Text(
+                    state.isLoadingMetadata ? 'Analizando enlace...' : 'Analizar enlace',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    side: BorderSide(
+                      color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                    ),
                   ),
                 ),
               ),
@@ -273,23 +302,25 @@ class _HomeTabState extends State<HomeTab> {
               AnimatedOpacity(
                 duration: const Duration(milliseconds: 250),
                 opacity: hasMetadata ? 1.0 : 0.4,
-                child: ElevatedButton.icon(
-                  // onPressed: null disables the button truly
+                child: _ScaleBounceButton(
                   onPressed: hasMetadata ? () => _addToQueue(state) : null,
-                  icon: const Icon(Icons.add_to_photos_rounded, size: 20),
-                  label: const Text('Añadir a la cola de descargas'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                  child: ElevatedButton.icon(
+                    // onPressed: null disables the button truly
+                    onPressed: hasMetadata ? () => _addToQueue(state) : null,
+                    icon: const Icon(Icons.add_to_photos_rounded, size: 20),
+                    label: const Text('Añadir a la cola de descargas'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      textStyle: GoogleFonts.outfit(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      disabledBackgroundColor: AppColors.primary,
+                      disabledForegroundColor: Colors.white,
                     ),
-                    textStyle: GoogleFonts.outfit(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    // Keep primary color even when disabled for the visual opacity trick
-                    disabledBackgroundColor: AppColors.primary,
-                    disabledForegroundColor: Colors.white,
                   ),
                 ),
               ),
@@ -344,6 +375,38 @@ class _HomeTabState extends State<HomeTab> {
           ),
         );
       },
+    );
+  }
+}
+
+// ─── Interactive scale bounce wrapper ────────────────────────────────────────
+class _ScaleBounceButton extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onPressed;
+
+  const _ScaleBounceButton({required this.child, required this.onPressed});
+
+  @override
+  State<_ScaleBounceButton> createState() => _ScaleBounceButtonState();
+}
+
+class _ScaleBounceButtonState extends State<_ScaleBounceButton> {
+  bool _isDown = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.onPressed == null) return widget.child;
+
+    return Listener(
+      onPointerDown: (_) => setState(() => _isDown = true),
+      onPointerUp: (_) => setState(() => _isDown = false),
+      onPointerCancel: (_) => setState(() => _isDown = false),
+      child: AnimatedScale(
+        scale: _isDown ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeInOut,
+        child: widget.child,
+      ),
     );
   }
 }

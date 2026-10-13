@@ -77,9 +77,16 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
         ));
       }
     } catch (e) {
+      final raw = e.toString().replaceFirst("Exception: ", "").trim();
+      final errorMsg = (raw.toLowerCase().contains("conexión a internet") ||
+              raw.toLowerCase().contains("failed host lookup") ||
+              raw.toLowerCase().contains("socket") ||
+              raw.toLowerCase().contains("errno = 7"))
+          ? "Verifica tu conexión a internet"
+          : raw;
       emit(state.copyWith(
         isLoadingMetadata: false,
-        metadataError: 'No se pudo obtener información del enlace: ${e.toString().replaceFirst("Exception: ", "")}',
+        metadataError: errorMsg,
       ));
     }
   }

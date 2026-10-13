@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/services/share_intent_service.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_state.dart';
 import 'completed_tab.dart';
@@ -24,6 +25,28 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
+  final GlobalKey<HomeTabState> _homeTabKey = GlobalKey<HomeTabState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize native share reception (Share sheet from YouTube/Browsers)
+    ShareIntentService.instance.initialize(
+      onUrlReceived: (url) {
+        if (!mounted) return;
+        setState(() {
+          _currentIndex = 0;
+        });
+        _homeTabKey.currentState?.handleIncomingUrl(url);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    ShareIntentService.instance.dispose();
+    super.dispose();
+  }
 
   void _onTabSelected(int index) {
     setState(() {
@@ -42,7 +65,10 @@ class _MainScreenState extends State<MainScreen> {
         final completedCount = state.completedTasks.length;
 
         final screens = [
-          HomeTab(onNavigateToQueue: () => _onTabSelected(1)),
+          HomeTab(
+            key: _homeTabKey,
+            onNavigateToQueue: () => _onTabSelected(1),
+          ),
           QueueTab(onNavigateToHome: () => _onTabSelected(0)),
           const CompletedTab(),
           SettingsTab(

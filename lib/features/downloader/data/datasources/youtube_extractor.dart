@@ -29,15 +29,26 @@ class YoutubeExtractor {
   static String? extractVideoId(String rawUrl) {
     final url = rawUrl.trim();
     final regex = RegExp(
-      r'(?:youtube\.com/(?:watch\?(?:.*?&)?v=|embed/|shorts/|live/)|youtu\.be/)([\w-]{11})',
+      r'(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
       caseSensitive: false,
     );
     final match = regex.firstMatch(url);
     return match?.group(1);
   }
 
+  /// Cleans and returns a canonical YouTube watch URL without tracking garbage,
+  /// or the trimmed URL if no YouTube ID is identified.
+  static String cleanUrl(String rawUrl) {
+    final videoId = extractVideoId(rawUrl);
+    if (videoId != null && videoId.length == 11) {
+      return 'https://www.youtube.com/watch?v=$videoId';
+    }
+    return rawUrl.trim();
+  }
+
   /// Check if the URL is a recognized YouTube URL
   static bool isYoutubeUrl(String url) {
+    if (extractVideoId(url) != null) return true;
     final uri = Uri.tryParse(url.trim());
     if (uri == null) return false;
     final host = uri.host.toLowerCase();
@@ -47,7 +58,7 @@ class YoutubeExtractor {
   }
 
   /// Extract metadata and video details from YouTube.
-  /// Throws user-friendly exceptions on network or rate-limit errors.
+  /// Throws user-friendly exceptions on network, host lookup, or rate-limit errors.
   Future<MediaMetadata> fetchMetadata(String url) async {
     try {
       // Extract clean video ID via Regex — strips tracking params (?si=..., etc.)
@@ -74,7 +85,7 @@ class YoutubeExtractor {
       }
 
       return MediaMetadata(
-        url: url.trim(),
+        url: cleanUrl(url),
         title: video.title,
         author: video.author,
         thumbnailUrl: video.thumbnails.highResUrl.isNotEmpty
@@ -85,20 +96,24 @@ class YoutubeExtractor {
         availableQualities: availableQualities.toList(),
       );
     } on SocketException {
-      throw Exception(
-        'Sin conexión a internet. Verifica tu red e inténtalo de nuevo.',
-      );
+      throw Exception('Verifica tu conexión a internet');
     } on RequestLimitExceededException {
       throw Exception(
         'YouTube ha limitado las solicitudes temporalmente. '
         'Espera unos minutos e inténtalo de nuevo.',
       );
     } on VideoUnavailableException {
-      throw Exception(
-        'El video no está disponible o es privado.',
-      );
+      throw Exception('El video no está disponible o es privado.');
     } catch (e) {
-      // Re-throw unknown errors with context
+      final str = e.toString().toLowerCase();
+      if (str.contains('failed host lookup') ||
+          str.contains('socket') ||
+          str.contains('network') ||
+          str.contains('errno = 7') ||
+          str.contains('connection refused') ||
+          str.contains('timed out')) {
+        throw Exception('Verifica tu conexión a internet');
+      }
       throw Exception('No se pudo obtener la información del enlace: $e');
     }
   }
@@ -173,15 +188,20 @@ class YoutubeExtractor {
         );
       }
     } on SocketException {
-      throw Exception(
-        'Sin conexión a internet. Verifica tu red e inténtalo de nuevo.',
-      );
+      throw Exception('Verifica tu conexión a internet');
     } on RequestLimitExceededException {
       throw Exception(
         'YouTube ha limitado las solicitudes temporalmente. '
         'Espera unos minutos e inténtalo de nuevo.',
       );
     } catch (e) {
+      final str = e.toString().toLowerCase();
+      if (str.contains('failed host lookup') ||
+          str.contains('socket') ||
+          str.contains('network') ||
+          str.contains('errno = 7')) {
+        throw Exception('Verifica tu conexión a internet');
+      }
       rethrow;
     }
   }
