@@ -76,3 +76,4 @@ class ShareIntentService {
     _intentSub = null;
   }
 }
+
