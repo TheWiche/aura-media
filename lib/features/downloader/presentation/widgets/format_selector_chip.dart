@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/formatters.dart';
 import '../../data/models/download_task.dart';
 
 class FormatSelectorChip extends StatelessWidget {
@@ -9,6 +10,8 @@ class FormatSelectorChip extends StatelessWidget {
   final ValueChanged<MediaType> onMediaTypeChanged;
   final ValueChanged<VideoQuality> onQualityChanged;
   final List<VideoQuality> availableQualities;
+  final int? audioSizeBytes;
+  final int? videoSizeBytes;
 
   const FormatSelectorChip({
     super.key,
@@ -23,6 +26,8 @@ class FormatSelectorChip extends StatelessWidget {
       VideoQuality.p480,
       VideoQuality.p360,
     ],
+    this.audioSizeBytes,
+    this.videoSizeBytes,
   });
 
   @override
@@ -48,7 +53,9 @@ class FormatSelectorChip extends StatelessWidget {
               child: _buildTypeButton(
                 context: context,
                 title: 'Video',
-                subtitle: 'MP4 con audio',
+                subtitle: videoSizeBytes != null
+                    ? 'MP4 · ${Formatters.formatBytes(videoSizeBytes!)}'
+                    : 'MP4 con audio',
                 icon: Icons.movie_outlined,
                 isSelected: selectedMediaType == MediaType.video,
                 onTap: () => onMediaTypeChanged(MediaType.video),
@@ -59,7 +66,9 @@ class FormatSelectorChip extends StatelessWidget {
               child: _buildTypeButton(
                 context: context,
                 title: 'Solo Audio',
-                subtitle: 'MP3 (Audio alta calidad)',
+                subtitle: audioSizeBytes != null
+                    ? 'MP3 · ${Formatters.formatBytes(audioSizeBytes!)}'
+                    : 'MP3 (Audio alta calidad)',
                 icon: Icons.music_note_outlined,
                 isSelected: selectedMediaType == MediaType.audio,
                 onTap: () => onMediaTypeChanged(MediaType.audio),

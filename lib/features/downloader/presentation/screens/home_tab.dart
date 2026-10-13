@@ -284,6 +284,8 @@ class HomeTabState extends State<HomeTab> {
               FormatSelectorChip(
                 selectedMediaType: _selectedMediaType,
                 selectedQuality: _selectedQuality,
+                audioSizeBytes: state.previewMetadata?.audioSizeBytes,
+                videoSizeBytes: state.previewMetadata?.videoSizeBytes,
                 availableQualities: state.previewMetadata?.availableQualities ??
                     const [
                       VideoQuality.best,

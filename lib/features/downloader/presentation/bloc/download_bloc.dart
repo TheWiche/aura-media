@@ -119,6 +119,10 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
     final extension = event.mediaType == MediaType.audio ? 'mp3' : 'mp4';
     final title = event.metadata?.title ?? 'Descarga_${DateTime.now().millisecondsSinceEpoch}';
 
+    final initialTotalBytes = event.mediaType == MediaType.audio
+        ? (event.metadata?.audioSizeBytes ?? 0)
+        : (event.metadata?.videoSizeBytes ?? 0);
+
     final task = DownloadTask(
       id: taskId,
       notificationId: notifId,
@@ -129,6 +133,7 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
       mediaType: event.mediaType,
       quality: event.quality,
       fileExtension: extension,
+      totalBytes: initialTotalBytes,
       createdAt: DateTime.now(),
       status: DownloadStatus.queued,
     );

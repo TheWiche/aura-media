@@ -10,6 +10,8 @@ class MediaMetadata extends Equatable {
   final String platform;
   final List<VideoQuality> availableQualities;
   final String? directDownloadUrl;
+  final int? audioSizeBytes;
+  final int? videoSizeBytes;
 
   const MediaMetadata({
     required this.url,
@@ -26,6 +28,8 @@ class MediaMetadata extends Equatable {
       VideoQuality.p360,
     ],
     this.directDownloadUrl,
+    this.audioSizeBytes,
+    this.videoSizeBytes,
   });
 
   @override
@@ -38,6 +42,8 @@ class MediaMetadata extends Equatable {
         platform,
         availableQualities,
         directDownloadUrl,
+        audioSizeBytes,
+        videoSizeBytes,
       ];
 }
 

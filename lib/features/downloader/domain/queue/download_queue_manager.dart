@@ -249,6 +249,7 @@ class DownloadQueueManager {
       // 1. Resolve Stream
       Stream<List<int>> stream;
       int totalBytes = task.totalBytes;
+      int containerTotalBytes = task.totalBytes;
       String effectiveExtension = task.fileExtension;
       bool requiresAudioExtraction = false;
 
@@ -260,6 +261,7 @@ class DownloadQueueManager {
         );
         stream = resolved.stream;
         totalBytes = resolved.totalBytes;
+        containerTotalBytes = resolved.containerTotalBytes;
         requiresAudioExtraction = resolved.requiresAudioExtraction;
         if (resolved.extension.isNotEmpty) {
           effectiveExtension = resolved.extension;
@@ -270,6 +272,7 @@ class DownloadQueueManager {
           mediaType: task.mediaType,
         );
         totalBytes = genericResult.totalBytes;
+        containerTotalBytes = genericResult.totalBytes;
         if (genericResult.extension.isNotEmpty) {
           effectiveExtension = genericResult.extension;
         }
@@ -308,8 +311,9 @@ class DownloadQueueManager {
       }
 
       // 3. Pipe stream into file with throttled metrics calculation
-      int downloadedBytes = 0;
-      int lastDownloadedBytes = 0;
+      int downloadedContainerBytes = 0;
+      int virtualDownloadedBytes = 0;
+      int lastDownloadedContainerBytes = 0;
       DateTime lastSpeedCheck = DateTime.now();
       DateTime lastNotificationUpdate = DateTime.now();
       double currentSpeed = 0.0;
@@ -320,18 +324,27 @@ class DownloadQueueManager {
         }
 
         sink.add(chunk);
-        downloadedBytes += chunk.length;
+        downloadedContainerBytes += chunk.length;
 
         final now = DateTime.now();
 
         // Speed calculation every 1000ms
         final speedInterval = now.difference(lastSpeedCheck).inMilliseconds;
         if (speedInterval >= 1000) {
-          final bytesDiff = downloadedBytes - lastDownloadedBytes;
-          currentSpeed = (bytesDiff / (speedInterval / 1000));
-          lastDownloadedBytes = downloadedBytes;
+          final bytesDiff = downloadedContainerBytes - lastDownloadedContainerBytes;
+          final physicalSpeed = (bytesDiff / (speedInterval / 1000));
+          currentSpeed = (containerTotalBytes > 0 && totalBytes != containerTotalBytes)
+              ? physicalSpeed * (totalBytes / containerTotalBytes)
+              : physicalSpeed;
+          lastDownloadedContainerBytes = downloadedContainerBytes;
           lastSpeedCheck = now;
         }
+
+        // Virtual downloaded bytes proportionally matching totalBytes
+        final progressRatio = containerTotalBytes > 0
+            ? (downloadedContainerBytes / containerTotalBytes).clamp(0.0, 1.0)
+            : 0.0;
+        virtualDownloadedBytes = (progressRatio * totalBytes).round();
 
         // Throttle UI and Notification updates every 400ms
         if (now.difference(lastNotificationUpdate).inMilliseconds >= 400) {
@@ -339,7 +352,7 @@ class DownloadQueueManager {
           final idx = _tasks.indexWhere((t) => t.id == task.id);
           if (idx >= 0) {
             _tasks[idx] = _tasks[idx].copyWith(
-              downloadedBytes: downloadedBytes,
+              downloadedBytes: virtualDownloadedBytes,
               speedBytesPerSec: currentSpeed,
             );
             _notifyListeners();
@@ -347,7 +360,7 @@ class DownloadQueueManager {
             // Native notification update
             final percent = _tasks[idx].progressPercent;
             final speedLabel = Formatters.formatSpeed(currentSpeed);
-            final downloadedLabel = Formatters.formatBytes(downloadedBytes);
+            final downloadedLabel = Formatters.formatBytes(virtualDownloadedBytes);
             final totalLabel = totalBytes > 0 ? Formatters.formatBytes(totalBytes) : '...';
 
             _notificationService.showProgressNotification(
@@ -392,7 +405,7 @@ class DownloadQueueManager {
       // 5. Mark as completed
       final actualFinalBytes = (await finalFile.exists())
           ? await finalFile.length()
-          : downloadedBytes;
+          : virtualDownloadedBytes;
 
       final completedIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (completedIndex >= 0) {

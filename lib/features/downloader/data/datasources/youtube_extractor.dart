@@ -64,6 +64,7 @@ class ResolvedStream {
   final StreamInfo streamInfo;
   final Stream<List<int>> stream;
   final int totalBytes;
+  final int containerTotalBytes;
   final String extension;
   final bool requiresAudioExtraction;
 
@@ -71,9 +72,10 @@ class ResolvedStream {
     required this.streamInfo,
     required this.stream,
     required this.totalBytes,
+    int? containerTotalBytes,
     required this.extension,
     this.requiresAudioExtraction = false,
-  });
+  }) : containerTotalBytes = containerTotalBytes ?? totalBytes;
 }
 
 class YoutubeExtractor {
@@ -181,6 +183,16 @@ class YoutubeExtractor {
         // Duration remains null or fallback if watch page was blocked; title and qualities are intact!
       }
 
+      int? audioSizeBytes;
+      int? videoSizeBytes;
+
+      if (manifest.audioOnly.isNotEmpty) {
+        audioSizeBytes = manifest.audioOnly.withHighestBitrate().size.totalBytes;
+      }
+      if (manifest.muxed.isNotEmpty) {
+        videoSizeBytes = manifest.muxed.sortByVideoQuality().first.size.totalBytes;
+      }
+
       return MediaMetadata(
         url: cleanUrl(url),
         title: title,
@@ -189,6 +201,8 @@ class YoutubeExtractor {
         duration: duration,
         platform: 'YouTube',
         availableQualities: availableQualities.toList(),
+        audioSizeBytes: audioSizeBytes,
+        videoSizeBytes: videoSizeBytes,
       );
     } on SocketException {
       throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
@@ -263,10 +277,16 @@ class YoutubeExtractor {
             orElse: () => muxedStreams.last,
           );
           final stream = _yt.videos.streamsClient.get(selectedStream);
+          final audioStreams = manifest.audioOnly;
+          final estimatedAudioBytes = audioStreams.isNotEmpty
+              ? audioStreams.withHighestBitrate().size.totalBytes
+              : (selectedStream.size.totalBytes * 0.18).round();
+
           return ResolvedStream(
             streamInfo: selectedStream,
             stream: stream,
-            totalBytes: selectedStream.size.totalBytes,
+            totalBytes: estimatedAudioBytes,
+            containerTotalBytes: selectedStream.size.totalBytes,
             extension: 'mp3',
             requiresAudioExtraction: true,
           );
