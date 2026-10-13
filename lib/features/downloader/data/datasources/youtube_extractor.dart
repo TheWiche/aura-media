@@ -1,7 +1,63 @@
 import 'dart:io';
+import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide VideoQuality;
 import '../models/download_task.dart';
 import '../models/media_metadata.dart';
+
+/// Real mobile Chrome Android User-Agent header string (Pixel 8 Pro, Chrome 124)
+const String kMobileUserAgent =
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240105.004; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.6367.113 Mobile Safari/537.36';
+
+/// Custom HTTP Client that injects mobile User-Agent and headers on EVERY request
+class MobileHttpClient extends http.BaseClient {
+  final http.Client _inner;
+
+  MobileHttpClient([http.Client? inner]) : _inner = inner ?? http.Client();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    request.headers['user-agent'] = kMobileUserAgent;
+    request.headers['sec-ch-ua'] =
+        '"Chromium";v="124", "Not-A.Brand";v="99", "Google Chrome";v="124"';
+    request.headers['sec-ch-ua-mobile'] = '?1';
+    request.headers['sec-ch-ua-platform'] = '"Android"';
+    request.headers['accept-language'] = 'es-419,es;q=0.9,en-US;q=0.8,en;q=0.7';
+    return _inner.send(request);
+  }
+
+  @override
+  void close() {
+    _inner.close();
+    super.close();
+  }
+}
+
+/// Custom YoutubeHttpClient subclass for YoutubeExplode with mobile browser headers
+class MobileYoutubeHttpClient extends YoutubeHttpClient {
+  MobileYoutubeHttpClient([http.Client? client])
+      : super(MobileHttpClient(client));
+
+  @override
+  Map<String, String> get headers => const {
+        'user-agent': kMobileUserAgent,
+        'accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'accept-language': 'es-419,es;q=0.9,en-US;q=0.8,en;q=0.7',
+        'sec-ch-ua':
+            '"Chromium";v="124", "Not-A.Brand";v="99", "Google Chrome";v="124"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+        'cookie': 'CONSENT=YES+cb',
+      };
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    request.headers['user-agent'] = kMobileUserAgent;
+    request.headers['sec-ch-ua-mobile'] = '?1';
+    request.headers['sec-ch-ua-platform'] = '"Android"';
+    return super.send(request);
+  }
+}
 
 class ResolvedStream {
   final StreamInfo streamInfo;
@@ -20,7 +76,8 @@ class ResolvedStream {
 class YoutubeExtractor {
   final YoutubeExplode _yt;
 
-  YoutubeExtractor({YoutubeExplode? yt}) : _yt = yt ?? YoutubeExplode();
+  YoutubeExtractor({YoutubeExplode? yt})
+      : _yt = yt ?? YoutubeExplode(httpClient: MobileYoutubeHttpClient());
 
   // ─── Video ID extraction via Regex ─────────────────────────────────────────
   /// Extracts the 11-character YouTube video ID from any recognized URL format,
@@ -57,7 +114,7 @@ class YoutubeExtractor {
         host.contains('music.youtube.com');
   }
 
-  /// Extract metadata and video details from YouTube.
+  /// Extract metadata and video details locally from YouTube.
   /// Throws user-friendly exceptions on network, host lookup, or rate-limit errors.
   Future<MediaMetadata> fetchMetadata(String url) async {
     try {
@@ -67,7 +124,7 @@ class YoutubeExtractor {
 
       final video = await _yt.videos.get(videoId);
 
-      // Get available stream qualities
+      // Get available stream qualities from StreamManifest
       final manifest = await _yt.videos.streamsClient.getManifest(videoId);
       final availableQualities = <VideoQuality>{VideoQuality.best};
 
@@ -96,14 +153,22 @@ class YoutubeExtractor {
         availableQualities: availableQualities.toList(),
       );
     } on SocketException {
-      throw Exception('Verifica tu conexión a internet');
+      throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
+    } on VideoUnavailableException {
+      throw Exception('El video no está disponible o es privado.');
+    } on VideoUnplayableException {
+      throw Exception(
+        'El video tiene restricciones de edad o está bloqueado por YouTube',
+      );
+    } on TransientFailureException {
+      throw Exception(
+        'El video tiene restricciones de edad o está bloqueado por YouTube',
+      );
     } on RequestLimitExceededException {
       throw Exception(
         'YouTube ha limitado las solicitudes temporalmente. '
         'Espera unos minutos e inténtalo de nuevo.',
       );
-    } on VideoUnavailableException {
-      throw Exception('El video no está disponible o es privado.');
     } catch (e) {
       final str = e.toString().toLowerCase();
       if (str.contains('failed host lookup') ||
@@ -111,15 +176,27 @@ class YoutubeExtractor {
           str.contains('network') ||
           str.contains('errno = 7') ||
           str.contains('connection refused') ||
+          str.contains('handshake failed') ||
           str.contains('timed out')) {
-        throw Exception('Verifica tu conexión a internet');
+        throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
+      }
+      if (str.contains('unplayable') ||
+          str.contains('age') ||
+          str.contains('restricted') ||
+          str.contains('login_required') ||
+          str.contains('sign in') ||
+          str.contains('transientfailure') ||
+          str.contains('bot')) {
+        throw Exception(
+          'El video tiene restricciones de edad o está bloqueado por YouTube',
+        );
       }
       throw Exception('No se pudo obtener la información del enlace: $e');
     }
   }
 
   /// Resolve the stream and return a stream reader with total bytes.
-  /// Throws user-friendly exceptions on network or rate-limit errors.
+  /// Selects AudioOnlyStreamInfo with highest bitrate (for audio) or MuxedStreamInfo (for video).
   Future<ResolvedStream> resolveStream({
     required String url,
     required MediaType mediaType,
@@ -131,7 +208,7 @@ class YoutubeExtractor {
       final manifest = await _yt.videos.streamsClient.getManifest(videoId);
 
       if (mediaType == MediaType.audio) {
-        // Pick best audio-only stream (m4a/mp4 container preferred for mobile)
+        // AudioOnlyStreamInfo con mayor bitrate
         final audioStreams = manifest.audioOnly;
         if (audioStreams.isEmpty) {
           throw Exception('No se encontraron pistas de audio disponibles');
@@ -149,10 +226,10 @@ class YoutubeExtractor {
               : bestAudio.container.name.toLowerCase(),
         );
       } else {
-        // For video: prefer muxed streams (contains both video and audio)
+        // MuxedStreamInfo para video (incluye video y audio en un solo contenedor)
         final muxedStreams = manifest.muxed.sortByVideoQuality();
         if (muxedStreams.isEmpty) {
-          // Fallback to video-only if no muxed stream is present
+          // Fallback a video-only si no hay muxed
           final videoStreams = manifest.videoOnly.sortByVideoQuality();
           if (videoStreams.isEmpty) {
             throw Exception('No se encontraron pistas de video disponibles');
@@ -170,9 +247,9 @@ class YoutubeExtractor {
         final targetHeight = quality.heightPixels;
 
         if (targetHeight == null || quality == VideoQuality.best) {
-          selectedStream = muxedStreams.first; // highest quality muxed stream
+          selectedStream = muxedStreams.first; // Highest quality muxed stream
         } else {
-          // Find closest muxed stream matching desired resolution
+          // Encuentra el stream más cercano que coincida con la resolución deseada
           selectedStream = muxedStreams.firstWhere(
             (s) => s.videoResolution.height <= targetHeight,
             orElse: () => muxedStreams.last,
@@ -188,7 +265,15 @@ class YoutubeExtractor {
         );
       }
     } on SocketException {
-      throw Exception('Verifica tu conexión a internet');
+      throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
+    } on VideoUnplayableException {
+      throw Exception(
+        'El video tiene restricciones de edad o está bloqueado por YouTube',
+      );
+    } on TransientFailureException {
+      throw Exception(
+        'El video tiene restricciones de edad o está bloqueado por YouTube',
+      );
     } on RequestLimitExceededException {
       throw Exception(
         'YouTube ha limitado las solicitudes temporalmente. '
@@ -200,7 +285,15 @@ class YoutubeExtractor {
           str.contains('socket') ||
           str.contains('network') ||
           str.contains('errno = 7')) {
-        throw Exception('Verifica tu conexión a internet');
+        throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
+      }
+      if (str.contains('unplayable') ||
+          str.contains('age') ||
+          str.contains('restricted') ||
+          str.contains('transientfailure')) {
+        throw Exception(
+          'El video tiene restricciones de edad o está bloqueado por YouTube',
+        );
       }
       rethrow;
     }

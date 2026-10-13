@@ -78,12 +78,20 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
       }
     } catch (e) {
       final raw = e.toString().replaceFirst("Exception: ", "").trim();
-      final errorMsg = (raw.toLowerCase().contains("conexión a internet") ||
-              raw.toLowerCase().contains("failed host lookup") ||
-              raw.toLowerCase().contains("socket") ||
-              raw.toLowerCase().contains("errno = 7"))
-          ? "Verifica tu conexión a internet"
-          : raw;
+      final lower = raw.toLowerCase();
+      final errorMsg = (lower.contains("comprueba tus datos móviles") ||
+              lower.contains("conexión a internet") ||
+              lower.contains("failed host lookup") ||
+              lower.contains("socket") ||
+              lower.contains("network") ||
+              lower.contains("errno = 7"))
+          ? "Error de red: Comprueba tus datos móviles o Wi-Fi"
+          : (lower.contains("restricciones de edad") ||
+                  lower.contains("bloqueado por youtube") ||
+                  lower.contains("unplayable") ||
+                  lower.contains("transientfailure"))
+              ? "El video tiene restricciones de edad o está bloqueado por YouTube"
+              : raw;
       emit(state.copyWith(
         isLoadingMetadata: false,
         metadataError: errorMsg,
