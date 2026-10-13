@@ -6,6 +6,7 @@ import 'package:medias_download/core/services/background_service.dart';
 import 'package:medias_download/core/services/notification_service.dart';
 import 'package:medias_download/core/services/storage_service.dart';
 import 'package:medias_download/core/utils/formatters.dart';
+import 'package:medias_download/core/services/audio_extractor_service.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
 import 'package:medias_download/features/downloader/data/datasources/youtube_extractor.dart';
 import 'package:medias_download/features/downloader/data/models/download_task.dart';
@@ -249,6 +250,7 @@ class DownloadQueueManager {
       Stream<List<int>> stream;
       int totalBytes = task.totalBytes;
       String effectiveExtension = task.fileExtension;
+      bool requiresAudioExtraction = false;
 
       if (YoutubeExtractor.isYoutubeUrl(task.url)) {
         final resolved = await _youtubeExtractor.resolveStream(
@@ -258,6 +260,7 @@ class DownloadQueueManager {
         );
         stream = resolved.stream;
         totalBytes = resolved.totalBytes;
+        requiresAudioExtraction = resolved.requiresAudioExtraction;
         if (resolved.extension.isNotEmpty) {
           effectiveExtension = resolved.extension;
         }
@@ -365,21 +368,38 @@ class DownloadQueueManager {
         return;
       }
 
-      // 4. Rename temp file to final file
+      // 4. Rename temp file to final file (or extract audio if required)
       if (await tempFile.exists()) {
-        if (await finalFile.exists()) {
-          await finalFile.delete();
+        if (requiresAudioExtraction && Platform.isAndroid) {
+          final extracted = await AudioExtractorService.extractAudio(
+            inputPath: tempPath,
+            outputPath: finalPath,
+          );
+          try {
+            await tempFile.delete();
+          } catch (_) {}
+          if (!extracted) {
+            await tempFile.rename(finalPath);
+          }
+        } else {
+          if (await finalFile.exists()) {
+            await finalFile.delete();
+          }
+          await tempFile.rename(finalPath);
         }
-        await tempFile.rename(finalPath);
       }
 
       // 5. Mark as completed
+      final actualFinalBytes = (await finalFile.exists())
+          ? await finalFile.length()
+          : downloadedBytes;
+
       final completedIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (completedIndex >= 0) {
         _tasks[completedIndex] = _tasks[completedIndex].copyWith(
           status: DownloadStatus.completed,
-          downloadedBytes: downloadedBytes,
-          totalBytes: downloadedBytes,
+          downloadedBytes: actualFinalBytes,
+          totalBytes: actualFinalBytes,
           speedBytesPerSec: 0.0,
           completedAt: DateTime.now(),
           savedPath: finalPath,

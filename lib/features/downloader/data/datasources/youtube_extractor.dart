@@ -65,12 +65,14 @@ class ResolvedStream {
   final Stream<List<int>> stream;
   final int totalBytes;
   final String extension;
+  final bool requiresAudioExtraction;
 
   ResolvedStream({
     required this.streamInfo,
     required this.stream,
     required this.totalBytes,
     required this.extension,
+    this.requiresAudioExtraction = false,
   });
 }
 
@@ -248,7 +250,29 @@ class YoutubeExtractor {
       );
 
       if (mediaType == MediaType.audio) {
-        // Prefer MP4 (AAC audio) for universal compatibility with all Android music players
+        // YouTube adaptive audio-only streams (itag 140, 251) do NOT have ratebypass=yes
+        // and are blocked with HTTP 403 Forbidden after 1 MB.
+        // YouTube Muxed stream (itag 18: 360p MP4) ALWAYS has ratebypass=yes signed by YouTube
+        // and contains an unthrottled, pristine 128kbps AAC stereo audio track.
+        // We select itag 18, download it cleanly without any 403 errors, and extract the
+        // audio track natively on device with Android's MediaExtractor.
+        final muxedStreams = manifest.muxed.sortByVideoQuality();
+        if (muxedStreams.isNotEmpty) {
+          final selectedStream = muxedStreams.firstWhere(
+            (s) => s.tag == 18,
+            orElse: () => muxedStreams.last,
+          );
+          final stream = _yt.videos.streamsClient.get(selectedStream);
+          return ResolvedStream(
+            streamInfo: selectedStream,
+            stream: stream,
+            totalBytes: selectedStream.size.totalBytes,
+            extension: 'mp3',
+            requiresAudioExtraction: true,
+          );
+        }
+
+        // Fallback to audio-only if no muxed stream is available
         final audioStreams = manifest.audioOnly;
         if (audioStreams.isEmpty) {
           throw Exception('No se encontraron pistas de audio disponibles');
@@ -268,6 +292,7 @@ class YoutubeExtractor {
           stream: stream,
           totalBytes: bestAudio.size.totalBytes,
           extension: 'mp3',
+          requiresAudioExtraction: false,
         );
       } else {
         // MuxedStreamInfo para video (incluye video y audio en un solo contenedor)
