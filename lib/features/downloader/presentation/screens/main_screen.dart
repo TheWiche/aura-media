@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_state.dart';
 import 'completed_tab.dart';
 import 'home_tab.dart';
 import 'queue_tab.dart';
+import '../../../settings/presentation/screens/settings_tab.dart';
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+
+  const MainScreen({
+    super.key,
+    required this.onThemeModeChanged,
+  });
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -25,6 +33,9 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final currentThemeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
         final activeCount = state.activeTasks.length;
@@ -34,6 +45,10 @@ class _MainScreenState extends State<MainScreen> {
           HomeTab(onNavigateToQueue: () => _onTabSelected(1)),
           QueueTab(onNavigateToHome: () => _onTabSelected(0)),
           const CompletedTab(),
+          SettingsTab(
+            currentThemeMode: currentThemeMode,
+            onThemeModeChanged: widget.onThemeModeChanged,
+          ),
         ];
 
         return Scaffold(
@@ -43,22 +58,22 @@ class _MainScreenState extends State<MainScreen> {
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
+                    color: AppColors.primary.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Icon(
                     Icons.cloud_download_rounded,
                     color: AppColors.primary,
-                    size: 22,
+                    size: 20,
                   ),
                 ),
                 const SizedBox(width: 10),
-                const Text(
-                  "Media's Download",
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: -0.3,
+                Text(
+                  AppConstants.appName,
+                  style: GoogleFonts.outfit(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.5,
                   ),
                 ),
               ],
@@ -69,9 +84,9 @@ class _MainScreenState extends State<MainScreen> {
                   margin: const EdgeInsets.only(right: 16),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.2),
+                    color: AppColors.primary.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.4)),
+                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -87,7 +102,7 @@ class _MainScreenState extends State<MainScreen> {
                       const SizedBox(width: 6),
                       Text(
                         '${state.downloadingCount} activas',
-                        style: const TextStyle(
+                        style: GoogleFonts.outfit(
                           color: AppColors.primary,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
@@ -137,6 +152,11 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 label: 'Completados',
               ),
+              const NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: 'Ajustes',
+              ),
             ],
           ),
         );
@@ -144,4 +164,3 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 }
-

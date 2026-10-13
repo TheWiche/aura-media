@@ -1,31 +1,53 @@
 import 'package:flutter/material.dart';
 
+/// Aura Media — Premium Dark & Light color palette
 class AppColors {
-  // Surface & Backgrounds (Dark OLED / Charcoal Palette)
-  static const Color background = Color(0xFF0D0F15);
-  static const Color surface = Color(0xFF161922);
-  static const Color surfaceVariant = Color(0xFF1E2330);
-  static const Color card = Color(0xFF1A1E29);
-  static const Color border = Color(0xFF2B3242);
+  // ─── Dark Theme ────────────────────────────────────────────────────────────
+  static const Color darkBackground = Color(0xFF080A0F);
+  static const Color darkSurface = Color(0xFF111318);
+  static const Color darkSurfaceVariant = Color(0xFF191C24);
+  static const Color darkCard = Color(0xFF14171F);
+  static const Color darkBorder = Color(0xFF1E2330);
 
-  // Brand & Accents
-  static const Color primary = Color(0xFF6366F1); // Indigo Vibrant
-  static const Color primaryVariant = Color(0xFF4F46E5);
-  static const Color secondary = Color(0xFF06B6D4); // Cyan Accent
-  static const Color accent = Color(0xFF10B981); // Emerald (Success)
-  static const Color warning = Color(0xFFF59E0B); // Amber
-  static const Color error = Color(0xFFEF4444); // Crimson Rose
+  // ─── Light Theme ───────────────────────────────────────────────────────────
+  static const Color lightBackground = Color(0xFFF5F6FA);
+  static const Color lightSurface = Color(0xFFFFFFFF);
+  static const Color lightSurfaceVariant = Color(0xFFEEF0F5);
+  static const Color lightCard = Color(0xFFFFFFFF);
+  static const Color lightBorder = Color(0xFFE4E6EF);
 
-  // Typography
-  static const Color textPrimary = Color(0xFFF8FAFC);
-  static const Color textSecondary = Color(0xFF94A3B8);
-  static const Color textMuted = Color(0xFF64748B);
+  // ─── Brand / Accent (shared) ───────────────────────────────────────────────
+  static const Color primary = Color(0xFF7C6FE0);      // Soft violet — premium
+  static const Color primaryLight = Color(0xFF9D94E8);
+  static const Color secondary = Color(0xFF4ECDC4);    // Teal accent
+  static const Color accent = Color(0xFF3DDC84);       // Emerald success
+  static const Color warning = Color(0xFFFFA63E);      // Warm amber
+  static const Color error = Color(0xFFFF5C72);        // Soft rose
 
-  // Status Badges
-  static const Color statusQueued = Color(0xFF818CF8);
-  static const Color statusDownloading = Color(0xFF38BDF8);
-  static const Color statusPaused = Color(0xFFFBBF24);
-  static const Color statusCompleted = Color(0xFF34D399);
-  static const Color statusFailed = Color(0xFFF87171);
+  // ─── Typography — Dark ─────────────────────────────────────────────────────
+  static const Color darkTextPrimary = Color(0xFFF0F2FF);
+  static const Color darkTextSecondary = Color(0xFF8B92AB);
+  static const Color darkTextMuted = Color(0xFF4D5570);
+
+  // ─── Typography — Light ────────────────────────────────────────────────────
+  static const Color lightTextPrimary = Color(0xFF0D0F1A);
+  static const Color lightTextSecondary = Color(0xFF505573);
+  static const Color lightTextMuted = Color(0xFFA0A5C0);
+
+  // ─── Status badges (shared) ────────────────────────────────────────────────
+  static const Color statusQueued = Color(0xFF9C8FEB);
+  static const Color statusDownloading = Color(0xFF4ECDC4);
+  static const Color statusPaused = Color(0xFFFFA63E);
+  static const Color statusCompleted = Color(0xFF3DDC84);
+  static const Color statusFailed = Color(0xFFFF5C72);
+
+  // ─── Legacy aliases (for backward compat) ─────────────────────────────────
+  static const Color background = darkBackground;
+  static const Color surface = darkSurface;
+  static const Color surfaceVariant = darkSurfaceVariant;
+  static const Color card = darkCard;
+  static const Color border = darkBorder;
+  static const Color textPrimary = darkTextPrimary;
+  static const Color textSecondary = darkTextSecondary;
+  static const Color textMuted = darkTextMuted;
 }
-

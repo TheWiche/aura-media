@@ -16,6 +16,25 @@ void main() {
       expect(YoutubeExtractor.isYoutubeUrl('https://tiktok.com/@user/video/123'), isFalse);
     });
 
+    test('extractVideoId extracts 11-char ID and removes tracking parameters', () {
+      expect(
+        YoutubeExtractor.extractVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share&si=12345'),
+        'dQw4w9WgXcQ',
+      );
+      expect(
+        YoutubeExtractor.extractVideoId('https://youtu.be/dQw4w9WgXcQ?si=abcde12345'),
+        'dQw4w9WgXcQ',
+      );
+      expect(
+        YoutubeExtractor.extractVideoId('https://www.youtube.com/shorts/dQw4w9WgXcQ'),
+        'dQw4w9WgXcQ',
+      );
+      expect(
+        YoutubeExtractor.extractVideoId('https://www.youtube.com/embed/dQw4w9WgXcQ'),
+        'dQw4w9WgXcQ',
+      );
+    });
+
     test('GenericExtractor detects third-party platforms', () {
       expect(GenericExtractor.detectPlatform('https://www.tiktok.com/@user/video/123'), 'TikTok');
       expect(GenericExtractor.detectPlatform('https://www.instagram.com/reel/C123'), 'Instagram');

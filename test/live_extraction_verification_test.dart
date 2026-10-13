@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
@@ -95,3 +96,4 @@ void main() {
     }
   });
 }
+

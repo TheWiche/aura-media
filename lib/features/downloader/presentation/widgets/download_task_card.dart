@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../data/models/download_task.dart';
@@ -23,13 +24,21 @@ class DownloadTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
+        color: isDark ? AppColors.darkCard : AppColors.lightCard,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -38,11 +47,11 @@ class DownloadTaskCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(10),
                 child: Container(
-                  width: 44,
-                  height: 44,
-                  color: AppColors.surfaceVariant,
+                  width: 48,
+                  height: 48,
+                  color: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
                   child: task.thumbnailUrl != null
                       ? Image.network(
                           task.thumbnailUrl!,
@@ -61,17 +70,17 @@ class DownloadTaskCard extends StatelessWidget {
                       task.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
+                      style: GoogleFonts.outfit(
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Text(
-                      '${task.mediaType == MediaType.audio ? "Audio (${task.fileExtension.toUpperCase()})" : "Video (${task.quality.label})"} • ${task.author ?? "Media"}',
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      '${task.mediaType == MediaType.audio ? "Audio (${task.fileExtension.toUpperCase()})" : "Video (${task.quality.label})"} · ${task.author ?? "Media"}',
+                      style: GoogleFonts.outfit(
+                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -83,62 +92,56 @@ class DownloadTaskCard extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
 
-          // Progress Bar
+          // Progress Bar — rounded, colored
           ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(8),
             child: LinearProgressIndicator(
-              value: task.status == DownloadStatus.queued
-                  ? null // indeterminate when queued waiting
-                  : task.progress,
-              minHeight: 6,
-              backgroundColor: AppColors.surfaceVariant,
+              value: task.status == DownloadStatus.queued ? null : task.progress,
+              minHeight: 5,
+              backgroundColor: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
               valueColor: AlwaysStoppedAnimation<Color>(_getStatusColor()),
             ),
           ),
 
           const SizedBox(height: 10),
 
-          // Details: Speed, Progress % & ETA
+          // Details: Speed, Progress & ETA  +  Action buttons
           Row(
             children: [
-              // Percent & Bytes
               Expanded(
                 child: Text(
                   _getProgressMetricsText(),
-                  style: const TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 12,
+                  style: GoogleFonts.outfit(
+                    color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
+                    fontSize: 11,
                   ),
                 ),
               ),
-
-              // Action buttons
               _buildActionButtons(),
             ],
           ),
 
           // Error message banner if failed
           if (task.errorMessage != null && task.status == DownloadStatus.failed) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+                color: AppColors.error.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline, size: 14, color: AppColors.error),
+                  const Icon(Icons.error_outline_rounded, size: 14, color: AppColors.error),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       task.errorMessage!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppColors.error, fontSize: 11),
+                      style: GoogleFonts.outfit(color: AppColors.error, fontSize: 11),
                     ),
                   ),
                 ],
@@ -152,7 +155,7 @@ class DownloadTaskCard extends StatelessWidget {
 
   Widget _buildTypeIcon() {
     return Icon(
-      task.mediaType == MediaType.audio ? Icons.music_note : Icons.movie,
+      task.mediaType == MediaType.audio ? Icons.music_note_rounded : Icons.movie_rounded,
       color: AppColors.primary,
       size: 22,
     );
@@ -165,19 +168,18 @@ class DownloadTaskCard extends StatelessWidget {
       DownloadStatus.paused => ('Pausado', AppColors.statusPaused),
       DownloadStatus.completed => ('Listo', AppColors.statusCompleted),
       DownloadStatus.failed => ('Error', AppColors.statusFailed),
-      DownloadStatus.canceled => ('Cancelado', AppColors.textMuted),
+      DownloadStatus.canceled => ('Cancelado', AppColors.darkTextMuted),
     };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         label,
-        style: TextStyle(
+        style: GoogleFonts.outfit(
           color: color,
           fontSize: 11,
           fontWeight: FontWeight.w600,
@@ -197,22 +199,16 @@ class DownloadTaskCard extends StatelessWidget {
   }
 
   String _getProgressMetricsText() {
-    if (task.status == DownloadStatus.queued) {
-      return 'Esperando turno...';
-    }
-    if (task.status == DownloadStatus.paused) {
-      return '${task.progressPercent}% • Pausado';
-    }
-    if (task.status == DownloadStatus.failed) {
-      return 'Descarga interrumpida';
-    }
+    if (task.status == DownloadStatus.queued) return 'Esperando turno...';
+    if (task.status == DownloadStatus.paused) return '${task.progressPercent}% · Pausado';
+    if (task.status == DownloadStatus.failed) return 'Descarga interrumpida';
 
     final downloadedStr = Formatters.formatBytes(task.downloadedBytes);
     final totalStr = task.totalBytes > 0 ? Formatters.formatBytes(task.totalBytes) : '...';
     final speedStr = Formatters.formatSpeed(task.speedBytesPerSec);
     final etaStr = Formatters.formatETA(task.totalBytes - task.downloadedBytes, task.speedBytesPerSec);
 
-    return '${task.progressPercent}% • $downloadedStr de $totalStr • $speedStr • ETA $etaStr';
+    return '${task.progressPercent}% · $downloadedStr / $totalStr · $speedStr · ETA $etaStr';
   }
 
   Widget _buildActionButtons() {
@@ -221,7 +217,7 @@ class DownloadTaskCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            icon: const Icon(Icons.pause_circle_outline, color: AppColors.warning, size: 22),
+            icon: const Icon(Icons.pause_circle_outline_rounded, color: AppColors.warning, size: 22),
             onPressed: onPause,
             tooltip: 'Pausar',
             visualDensity: VisualDensity.compact,
@@ -241,13 +237,13 @@ class DownloadTaskCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            icon: const Icon(Icons.play_circle_outline, color: AppColors.accent, size: 22),
+            icon: const Icon(Icons.play_circle_outline_rounded, color: AppColors.accent, size: 22),
             onPressed: onResume,
             tooltip: 'Reanudar',
             visualDensity: VisualDensity.compact,
           ),
           IconButton(
-            icon: const Icon(Icons.delete_outline, color: AppColors.textMuted, size: 22),
+            icon: const Icon(Icons.delete_outline_rounded, color: AppColors.darkTextMuted, size: 22),
             onPressed: onRemove,
             tooltip: 'Eliminar',
             visualDensity: VisualDensity.compact,
@@ -258,7 +254,7 @@ class DownloadTaskCard extends StatelessWidget {
 
     if (task.status == DownloadStatus.queued) {
       return IconButton(
-        icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
+        icon: const Icon(Icons.close_rounded, color: AppColors.darkTextMuted, size: 20),
         onPressed: onCancel,
         tooltip: 'Quitar de la cola',
         visualDensity: VisualDensity.compact,
@@ -270,13 +266,13 @@ class DownloadTaskCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: AppColors.primary, size: 22),
+            icon: const Icon(Icons.refresh_rounded, color: AppColors.primary, size: 22),
             onPressed: onRetry,
             tooltip: 'Reintentar',
             visualDensity: VisualDensity.compact,
           ),
           IconButton(
-            icon: const Icon(Icons.delete_outline, color: AppColors.textMuted, size: 22),
+            icon: const Icon(Icons.delete_outline_rounded, color: AppColors.darkTextMuted, size: 22),
             onPressed: onRemove,
             tooltip: 'Eliminar',
             visualDensity: VisualDensity.compact,
@@ -288,4 +284,3 @@ class DownloadTaskCard extends StatelessWidget {
     return const SizedBox.shrink();
   }
 }
-
