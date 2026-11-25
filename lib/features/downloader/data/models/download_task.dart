@@ -112,6 +112,62 @@ class DownloadTask extends Equatable {
 
   bool get isCompleted => status == DownloadStatus.completed;
 
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'notificationId': notificationId,
+      'url': url,
+      'title': title,
+      'author': author,
+      'thumbnailUrl': thumbnailUrl,
+      'mediaType': mediaType.name,
+      'quality': quality.name,
+      'fileExtension': fileExtension,
+      'savedPath': savedPath,
+      'totalBytes': totalBytes,
+      'downloadedBytes': downloadedBytes,
+      'speedBytesPerSec': speedBytesPerSec,
+      'status': status.name,
+      'errorMessage': errorMessage,
+      'createdAt': createdAt.toIso8601String(),
+      'completedAt': completedAt?.toIso8601String(),
+    };
+  }
+
+  factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    return DownloadTask(
+      id: json['id'] as String,
+      notificationId: (json['notificationId'] as num).toInt(),
+      url: json['url'] as String,
+      title: json['title'] as String,
+      author: json['author'] as String?,
+      thumbnailUrl: json['thumbnailUrl'] as String?,
+      mediaType: MediaType.values.firstWhere(
+        (e) => e.name == json['mediaType'],
+        orElse: () => MediaType.audio,
+      ),
+      quality: VideoQuality.values.firstWhere(
+        (e) => e.name == json['quality'],
+        orElse: () => VideoQuality.best,
+      ),
+      fileExtension: json['fileExtension'] as String? ?? 'mp3',
+      savedPath: json['savedPath'] as String?,
+      totalBytes: (json['totalBytes'] as num?)?.toInt() ?? 0,
+      downloadedBytes: (json['downloadedBytes'] as num?)?.toInt() ?? 0,
+      speedBytesPerSec: (json['speedBytesPerSec'] as num?)?.toDouble() ?? 0.0,
+      status: DownloadStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+        orElse: () => DownloadStatus.queued,
+      ),
+      errorMessage: json['errorMessage'] as String?,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+      completedAt: json['completedAt'] != null
+          ? DateTime.tryParse(json['completedAt'] as String)
+          : null,
+    );
+  }
+
   DownloadTask copyWith({
     String? id,
     int? notificationId,
@@ -128,6 +184,7 @@ class DownloadTask extends Equatable {
     double? speedBytesPerSec,
     DownloadStatus? status,
     String? errorMessage,
+    bool clearErrorMessage = false,
     DateTime? createdAt,
     DateTime? completedAt,
   }) {
@@ -146,7 +203,8 @@ class DownloadTask extends Equatable {
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
       speedBytesPerSec: speedBytesPerSec ?? this.speedBytesPerSec,
       status: status ?? this.status,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage:
+          clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
       createdAt: createdAt ?? this.createdAt,
       completedAt: completedAt ?? this.completedAt,
     );
@@ -173,4 +231,3 @@ class DownloadTask extends Equatable {
         completedAt,
       ];
 }
-

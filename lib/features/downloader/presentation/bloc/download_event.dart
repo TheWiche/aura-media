@@ -100,3 +100,6 @@ class TasksUpdatedEvent extends DownloadEvent {
   List<Object?> get props => [tasks];
 }
 
+class SyncTasksEvent extends DownloadEvent {
+  const SyncTasksEvent();
+}

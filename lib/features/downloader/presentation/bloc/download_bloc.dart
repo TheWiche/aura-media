@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:uuid/uuid.dart';
+import 'package:medias_download/core/services/background_service.dart';
 import 'package:medias_download/core/services/permission_service.dart';
+import 'package:medias_download/core/services/settings_service.dart';
+import 'package:medias_download/core/services/task_persistence_service.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
 import 'package:medias_download/features/downloader/data/datasources/youtube_extractor.dart';
 import 'package:medias_download/features/downloader/data/models/download_task.dart';
@@ -14,22 +19,30 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
   final YoutubeExtractor _youtubeExtractor;
   final GenericExtractor _genericExtractor;
   final PermissionService _permissionService;
+  final BackgroundService _backgroundService;
+  final bool _useForegroundIsolate;
   final Uuid _uuid = const Uuid();
 
   StreamSubscription<List<DownloadTask>>? _queueSubscription;
+  bool _taskDataCallbackAttached = false;
 
   DownloadBloc({
     DownloadQueueManager? queueManager,
     YoutubeExtractor? youtubeExtractor,
     GenericExtractor? genericExtractor,
     PermissionService? permissionService,
+    BackgroundService? backgroundService,
+    bool? useForegroundIsolate,
   })  : _queueManager = queueManager ?? DownloadQueueManager.instance,
         _youtubeExtractor = youtubeExtractor ?? YoutubeExtractor(),
         _genericExtractor = genericExtractor ?? GenericExtractor(),
         _permissionService = permissionService ?? PermissionService.instance,
+        _backgroundService = backgroundService ?? BackgroundService.instance,
+        _useForegroundIsolate =
+            useForegroundIsolate ?? (Platform.isAndroid && queueManager == null),
         super(DownloadState(
           tasks: (queueManager ?? DownloadQueueManager.instance).currentTasks,
-          concurrencyLimit: (queueManager ?? DownloadQueueManager.instance).maxConcurrentDownloads,
+          concurrencyLimit: _readInitialConcurrency(queueManager),
         )) {
     on<FetchMetadataEvent>(_onFetchMetadata);
     on<ClearMetadataEvent>(_onClearMetadata);
@@ -42,11 +55,60 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
     on<ClearCompletedEvent>(_onClearCompleted);
     on<UpdateConcurrencyLimitEvent>(_onUpdateConcurrencyLimit);
     on<TasksUpdatedEvent>(_onTasksUpdated);
+    on<SyncTasksEvent>(_onSyncTasks);
 
-    // Listen to background queue changes
-    _queueSubscription = _queueManager.tasksStream.listen((tasks) {
-      add(TasksUpdatedEvent(tasks));
-    });
+    if (_useForegroundIsolate) {
+      _initForegroundCommunication();
+      add(const SyncTasksEvent());
+    } else {
+      _queueSubscription = _queueManager.tasksStream.listen((tasks) {
+        add(TasksUpdatedEvent(tasks));
+      });
+    }
+  }
+
+  static int _readInitialConcurrency(DownloadQueueManager? injected) {
+    if (injected != null) return injected.maxConcurrentDownloads;
+    try {
+      return SettingsService.instance.getMaxConcurrentDownloads();
+    } catch (_) {
+      return DownloadQueueManager.instance.maxConcurrentDownloads;
+    }
+  }
+
+  void _initForegroundCommunication() {
+    if (_taskDataCallbackAttached) return;
+    _taskDataCallbackAttached = true;
+    FlutterForegroundTask.initCommunicationPort();
+    FlutterForegroundTask.addTaskDataCallback(_onReceiveForegroundData);
+  }
+
+  void _onReceiveForegroundData(Object data) {
+    if (isClosed || data is! Map) return;
+    final map = Map<String, dynamic>.from(data);
+    if (map['type'] == 'tasks' && map['tasks'] is List) {
+      final rawList = map['tasks'] as List<dynamic>;
+      final parsed = rawList
+          .whereType<Map>()
+          .map((e) => DownloadTask.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      add(TasksUpdatedEvent(parsed));
+    }
+  }
+
+  Future<void> _onSyncTasks(
+    SyncTasksEvent event,
+    Emitter<DownloadState> emit,
+  ) async {
+    if (!_useForegroundIsolate) return;
+    try {
+      final persisted = await TaskPersistenceService.instance.loadTasks();
+      emit(state.copyWith(
+        tasks: persisted,
+        concurrencyLimit: SettingsService.instance.getMaxConcurrentDownloads(),
+      ));
+      await _backgroundService.requestSync();
+    } catch (_) {}
   }
 
   Future<void> _onFetchMetadata(
@@ -110,14 +172,20 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
     EnqueueDownloadEvent event,
     Emitter<DownloadState> emit,
   ) async {
-    // Request permissions proactively
     await _permissionService.requestStoragePermission();
     await _permissionService.requestNotificationPermission();
 
     final taskId = _uuid.v4();
     final notifId = taskId.hashCode.abs() % 100000;
-    final extension = event.mediaType == MediaType.audio ? 'mp3' : 'mp4';
-    final title = event.metadata?.title ?? 'Descarga_${DateTime.now().millisecondsSinceEpoch}';
+
+    String audioExt = 'mp3';
+    try {
+      audioExt = SettingsService.instance.getAudioFormat().name;
+    } catch (_) {}
+
+    final extension = event.mediaType == MediaType.audio ? audioExt : 'mp4';
+    final title =
+        event.metadata?.title ?? 'Descarga_${DateTime.now().millisecondsSinceEpoch}';
 
     final initialTotalBytes = event.mediaType == MediaType.audio
         ? (event.metadata?.audioSizeBytes ?? 0)
@@ -138,60 +206,115 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
       status: DownloadStatus.queued,
     );
 
-    _queueManager.addTask(task);
-
-    // Reset metadata preview
-    emit(state.copyWith(clearMetadata: true));
+    if (_useForegroundIsolate) {
+      await _backgroundService.enqueueTask(task);
+      final updatedList = [...state.tasks, task];
+      emit(state.copyWith(tasks: updatedList, clearMetadata: true));
+    } else {
+      _queueManager.addTask(task);
+      emit(state.copyWith(clearMetadata: true));
+    }
   }
 
   Future<void> _onPauseDownload(
     PauseDownloadEvent event,
     Emitter<DownloadState> emit,
   ) async {
-    await _queueManager.pauseTask(event.taskId);
+    if (_useForegroundIsolate) {
+      await _backgroundService.pauseTask(event.taskId);
+      await _reloadIfIdle(emit);
+    } else {
+      await _queueManager.pauseTask(event.taskId);
+    }
   }
 
-  void _onResumeDownload(
+  Future<void> _onResumeDownload(
     ResumeDownloadEvent event,
     Emitter<DownloadState> emit,
-  ) {
-    _queueManager.resumeTask(event.taskId);
+  ) async {
+    if (_useForegroundIsolate) {
+      await _backgroundService.resumeTask(event.taskId);
+      await _reloadIfIdle(emit);
+    } else {
+      _queueManager.resumeTask(event.taskId);
+    }
   }
 
   Future<void> _onCancelDownload(
     CancelDownloadEvent event,
     Emitter<DownloadState> emit,
   ) async {
-    await _queueManager.cancelTask(event.taskId);
+    if (_useForegroundIsolate) {
+      await _backgroundService.cancelTask(event.taskId);
+      await _reloadIfIdle(emit);
+    } else {
+      await _queueManager.cancelTask(event.taskId);
+    }
   }
 
-  void _onRetryDownload(
+  Future<void> _onRetryDownload(
     RetryDownloadEvent event,
     Emitter<DownloadState> emit,
-  ) {
-    _queueManager.retryTask(event.taskId);
+  ) async {
+    if (_useForegroundIsolate) {
+      await _backgroundService.retryTask(event.taskId);
+      await _reloadIfIdle(emit);
+    } else {
+      _queueManager.retryTask(event.taskId);
+    }
   }
 
   Future<void> _onRemoveTask(
     RemoveTaskEvent event,
     Emitter<DownloadState> emit,
   ) async {
-    await _queueManager.removeTask(event.taskId, deletePhysicalFile: event.deletePhysicalFile);
+    if (_useForegroundIsolate) {
+      await _backgroundService.removeTask(
+        event.taskId,
+        deletePhysicalFile: event.deletePhysicalFile,
+      );
+      await _reloadIfIdle(emit);
+    } else {
+      await _queueManager.removeTask(
+        event.taskId,
+        deletePhysicalFile: event.deletePhysicalFile,
+      );
+    }
   }
 
-  void _onClearCompleted(
+  Future<void> _onClearCompleted(
     ClearCompletedEvent event,
     Emitter<DownloadState> emit,
-  ) {
-    _queueManager.clearCompleted();
+  ) async {
+    if (_useForegroundIsolate) {
+      await _backgroundService.clearCompleted();
+      await _reloadIfIdle(emit);
+    } else {
+      _queueManager.clearCompleted();
+    }
   }
 
-  void _onUpdateConcurrencyLimit(
+  Future<void> _onUpdateConcurrencyLimit(
     UpdateConcurrencyLimitEvent event,
     Emitter<DownloadState> emit,
-  ) {
-    _queueManager.setMaxConcurrency(event.limit);
+  ) async {
+    try {
+      await SettingsService.instance.setMaxConcurrentDownloads(event.limit);
+    } catch (_) {}
+
+    if (_useForegroundIsolate) {
+      await _backgroundService.updateConcurrency(event.limit);
+    } else {
+      _queueManager.setMaxConcurrency(event.limit);
+    }
     emit(state.copyWith(concurrencyLimit: event.limit));
+  }
+
+  Future<void> _reloadIfIdle(Emitter<DownloadState> emit) async {
+    if (!await FlutterForegroundTask.isRunningService) {
+      final tasks = await TaskPersistenceService.instance.loadTasks();
+      emit(state.copyWith(tasks: tasks));
+    }
   }
 
   void _onTasksUpdated(
@@ -204,7 +327,9 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
   @override
   Future<void> close() {
     _queueSubscription?.cancel();
+    if (_taskDataCallbackAttached) {
+      FlutterForegroundTask.removeTaskDataCallback(_onReceiveForegroundData);
+    }
     return super.close();
   }
 }
-

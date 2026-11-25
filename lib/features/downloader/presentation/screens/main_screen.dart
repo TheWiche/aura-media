@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/services/native_platform_service.dart';
+import '../../../../core/services/settings_service.dart';
 import '../../../../core/services/share_intent_service.dart';
+import '../../../../core/theme/aura_colors.dart';
+import '../../../../core/theme/aura_dimensions.dart';
+import '../../../../core/theme/aura_typography.dart';
+import '../../../../shared/navigation/aura_bottom_navigation.dart';
+import '../../../settings/presentation/screens/settings_tab.dart';
 import '../bloc/download_bloc.dart';
+import '../bloc/download_event.dart';
 import '../bloc/download_state.dart';
 import 'completed_tab.dart';
 import 'home_tab.dart';
 import 'queue_tab.dart';
-import '../../../settings/presentation/screens/settings_tab.dart';
 
 class MainScreen extends StatefulWidget {
   final ValueChanged<ThemeMode> onThemeModeChanged;
@@ -23,27 +28,50 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   final GlobalKey<HomeTabState> _homeTabKey = GlobalKey<HomeTabState>();
+  late ThemeMode _selectedThemeMode;
 
   @override
   void initState() {
     super.initState();
-    // Initialize native share reception (Share sheet from YouTube/Browsers)
+    WidgetsBinding.instance.addObserver(this);
+    _selectedThemeMode = SettingsService.instance.getThemeMode();
+
     ShareIntentService.instance.initialize(
-      onUrlReceived: (url) {
-        if (!mounted) return;
-        setState(() {
-          _currentIndex = 0;
-        });
-        _homeTabKey.currentState?.handleIncomingUrl(url);
-      },
+      onUrlReceived: _openIncomingUrlInHome,
     );
+
+    NativePlatformService.instance.setOpenMainUrlHandler(_openIncomingUrlInHome);
+    NativePlatformService.instance.getMainOpenUrl().then((url) {
+      if (url != null && url.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _openIncomingUrlInHome(url);
+        });
+      }
+    });
+  }
+
+  void _openIncomingUrlInHome(String url) {
+    if (!mounted) return;
+    setState(() {
+      _currentIndex = 0;
+    });
+    _homeTabKey.currentState?.handleIncomingUrl(url);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      SettingsService.instance.reload();
+      context.read<DownloadBloc>().add(const SyncTasksEvent());
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     ShareIntentService.instance.dispose();
     super.dispose();
   }
@@ -54,10 +82,15 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  void _handleThemeModeChanged(ThemeMode mode) {
+    setState(() => _selectedThemeMode = mode);
+    widget.onThemeModeChanged(mode);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final currentThemeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    final primary = AuraColors.primary(isDark);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -72,118 +105,92 @@ class _MainScreenState extends State<MainScreen> {
           QueueTab(onNavigateToHome: () => _onTabSelected(0)),
           const CompletedTab(),
           SettingsTab(
-            currentThemeMode: currentThemeMode,
-            onThemeModeChanged: widget.onThemeModeChanged,
+            currentThemeMode: _selectedThemeMode,
+            onThemeModeChanged: _handleThemeModeChanged,
           ),
         ];
 
         return Scaffold(
           appBar: AppBar(
+            titleSpacing: AuraDimensions.space5,
             title: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.cloud_download_rounded,
-                    color: AppColors.primary,
-                    size: 20,
-                  ),
+                Image.asset(
+                  'assets/icon/aura_logo.png',
+                  width: 28,
+                  height: 28,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AuraDimensions.space2),
                 Text(
                   AppConstants.appName,
-                  style: GoogleFonts.outfit(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
+                  style: AuraTypography.headingMedium.copyWith(
+                    color: AuraColors.textPrimary(isDark),
                   ),
                 ),
               ],
             ),
             actions: [
               if (state.downloadingCount > 0)
-                Container(
-                  margin: const EdgeInsets.only(right: 16),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 10,
-                        height: 10,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.primary,
-                        ),
+                GestureDetector(
+                  onTap: () => _onTabSelected(1),
+                  child: Container(
+                    margin: const EdgeInsets.only(right: AuraDimensions.space2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AuraDimensions.space3,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: primary.withValues(alpha: 0.14),
+                      borderRadius: AuraDimensions.radiusFull,
+                      border: Border.all(
+                        color: primary.withValues(alpha: 0.35),
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${state.downloadingCount} activas',
-                        style: GoogleFonts.outfit(
-                          color: AppColors.primary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 10,
+                          height: 10,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: primary,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Text(
+                          '${state.downloadingCount} activas',
+                          style: AuraTypography.metricSmall.copyWith(
+                            color: primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
+              IconButton(
+                tooltip: 'Ajustes',
+                onPressed: () => _onTabSelected(3),
+                icon: Icon(
+                  Icons.settings_outlined,
+                  color: _currentIndex == 3
+                      ? primary
+                      : AuraColors.textSecondary(isDark),
+                ),
+              ),
+              const SizedBox(width: AuraDimensions.space2),
             ],
           ),
           body: IndexedStack(
             index: _currentIndex,
             children: screens,
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _currentIndex,
+          bottomNavigationBar: AuraBottomNavigation(
+            currentIndex: _currentIndex,
+            activeCount: activeCount,
+            completedCount: completedCount,
             onDestinationSelected: _onTabSelected,
-            destinations: [
-              const NavigationDestination(
-                icon: Icon(Icons.add_link_outlined),
-                selectedIcon: Icon(Icons.add_link),
-                label: 'Descargar',
-              ),
-              NavigationDestination(
-                icon: Badge(
-                  isLabelVisible: activeCount > 0,
-                  label: Text('$activeCount'),
-                  child: const Icon(Icons.downloading_outlined),
-                ),
-                selectedIcon: Badge(
-                  isLabelVisible: activeCount > 0,
-                  label: Text('$activeCount'),
-                  child: const Icon(Icons.downloading),
-                ),
-                label: 'Cola',
-              ),
-              NavigationDestination(
-                icon: Badge(
-                  isLabelVisible: completedCount > 0,
-                  label: Text('$completedCount'),
-                  child: const Icon(Icons.folder_outlined),
-                ),
-                selectedIcon: Badge(
-                  isLabelVisible: completedCount > 0,
-                  label: Text('$completedCount'),
-                  child: const Icon(Icons.folder),
-                ),
-                label: 'Completados',
-              ),
-              const NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: 'Ajustes',
-              ),
-            ],
           ),
         );
       },

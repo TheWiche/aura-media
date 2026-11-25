@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/constants/app_colors.dart';
+import '../../../../core/theme/aura_colors.dart';
+import '../../../../core/theme/aura_dimensions.dart';
+import '../../../../core/theme/aura_typography.dart';
 import '../../../../core/utils/formatters.dart';
+import '../../../../shared/widgets/aura_card.dart';
 import '../../data/models/media_metadata.dart';
 
 class MediaPreviewCard extends StatelessWidget {
@@ -17,47 +19,37 @@ class MediaPreviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary = AuraColors.primary(isDark);
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : AppColors.lightCard,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: isDark ? 0.12 : 0.06),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(14),
+    return AuraCard(
+      padding: const EdgeInsets.all(AuraDimensions.space4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Thumbnail
           ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AuraDimensions.radiusMedium,
             child: Container(
-              width: 96,
-              height: 66,
-              color: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
+              width: 88,
+              height: 88,
+              color: primary.withValues(alpha: 0.12),
               child: metadata.thumbnailUrl != null
                   ? Image.network(
                       metadata.thumbnailUrl!,
                       fit: BoxFit.cover,
-                      errorBuilder: (ctx, err, stack) => const Icon(
+                      errorBuilder: (_, _, _) => Icon(
                         Icons.movie_creation_outlined,
-                        color: AppColors.darkTextMuted,
+                        color: textSecondary,
                       ),
                     )
-                  : const Icon(
+                  : Icon(
                       Icons.video_library_outlined,
-                      color: AppColors.darkTextMuted,
+                      color: textSecondary,
                     ),
             ),
           ),
-          const SizedBox(width: 12),
-          // Info
+          const SizedBox(width: AuraDimensions.space3),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -66,48 +58,48 @@ class MediaPreviewCard extends StatelessWidget {
                   metadata.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.outfit(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                  style: AuraTypography.headingSmall.copyWith(
+                    fontSize: 15,
+                    color: textPrimary,
                     height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: AuraDimensions.space1),
                 Text(
                   metadata.author,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.outfit(
-                    color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                    fontSize: 12,
+                  style: AuraTypography.bodySmall.copyWith(
+                    color: textSecondary,
                   ),
                 ),
-                const SizedBox(height: 7),
+                const SizedBox(height: AuraDimensions.space2),
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.12),
+                        color: primary.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         metadata.platform,
-                        style: GoogleFonts.outfit(
-                          color: AppColors.primary,
+                        style: AuraTypography.bodySmall.copyWith(
+                          color: primary,
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
                     if (metadata.duration != null) ...[
-                      const SizedBox(width: 8),
+                      const SizedBox(width: AuraDimensions.space2),
                       Text(
                         Formatters.formatDuration(metadata.duration!),
-                        style: GoogleFonts.outfit(
-                          color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                          fontSize: 11,
+                        style: AuraTypography.metricSmall.copyWith(
+                          color: textSecondary,
                         ),
                       ),
                     ],
@@ -116,15 +108,14 @@ class MediaPreviewCard extends StatelessWidget {
               ],
             ),
           ),
-          // Clear button
           GestureDetector(
             onTap: onClear,
             child: Padding(
-              padding: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.only(left: AuraDimensions.space2),
               child: Icon(
                 Icons.close_rounded,
                 size: 18,
-                color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
+                color: textSecondary,
               ),
             ),
           ),

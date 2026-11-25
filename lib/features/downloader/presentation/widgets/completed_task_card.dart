@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
-import '../../../../core/constants/app_colors.dart';
+import '../../../../core/theme/aura_colors.dart';
+import '../../../../core/theme/aura_dimensions.dart';
+import '../../../../core/theme/aura_typography.dart';
 import '../../../../core/utils/formatters.dart';
+import '../../../../shared/widgets/aura_card.dart';
 import '../../data/models/download_task.dart';
 
 class CompletedTaskCard extends StatelessWidget {
@@ -48,6 +50,9 @@ class CompletedTaskCard extends StatelessWidget {
   void _showDeleteDialog(BuildContext context) {
     bool deleteFromDisk = true;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final errColor = AuraColors.error(isDark);
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
 
     showDialog(
       context: context,
@@ -55,16 +60,9 @@ class CompletedTaskCard extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              backgroundColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              elevation: 0,
               title: Text(
                 'Eliminar elemento',
-                style: GoogleFonts.outfit(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: AuraTypography.headingSmall.copyWith(color: textPrimary),
               ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -72,30 +70,28 @@ class CompletedTaskCard extends StatelessWidget {
                 children: [
                   Text(
                     '¿Deseas eliminar "${task.title}" del historial?',
-                    style: GoogleFonts.outfit(
-                      color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                      fontSize: 14,
+                    style: AuraTypography.bodyMedium.copyWith(
+                      color: textSecondary,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AuraDimensions.space4),
                   InkWell(
-                    onTap: () => setState(() => deleteFromDisk = !deleteFromDisk),
-                    borderRadius: BorderRadius.circular(8),
+                    onTap: () =>
+                        setState(() => deleteFromDisk = !deleteFromDisk),
+                    borderRadius: AuraDimensions.radiusSmall,
                     child: Row(
                       children: [
                         Checkbox(
                           value: deleteFromDisk,
-                          activeColor: AppColors.error,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                          onChanged: (val) => setState(() => deleteFromDisk = val ?? true),
+                          activeColor: errColor,
+                          onChanged: (val) =>
+                              setState(() => deleteFromDisk = val ?? true),
                         ),
                         Expanded(
                           child: Text(
                             'Borrar archivo físico del disco',
-                            style: GoogleFonts.outfit(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              fontSize: 13,
-                            ),
+                            style: AuraTypography.bodyMedium
+                                .copyWith(color: textPrimary),
                           ),
                         ),
                       ],
@@ -108,22 +104,26 @@ class CompletedTaskCard extends StatelessWidget {
                   onPressed: () => Navigator.pop(ctx),
                   child: Text(
                     'Cancelar',
-                    style: GoogleFonts.outfit(
-                      color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                    ),
+                    style: AuraTypography.label.copyWith(color: textSecondary),
                   ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.error,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    backgroundColor: errColor,
+                    foregroundColor: AuraColors.white,
+                    minimumSize: const Size(110, 42),
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: AuraDimensions.radiusSmall,
+                    ),
                   ),
                   onPressed: () {
                     Navigator.pop(ctx);
                     onRemove(deleteFromDisk);
                   },
-                  child: Text('Eliminar', style: GoogleFonts.outfit(fontWeight: FontWeight.w600)),
+                  child: Text(
+                    'Eliminar',
+                    style: AuraTypography.label.copyWith(color: AuraColors.white),
+                  ),
                 ),
               ],
             );
@@ -136,24 +136,22 @@ class CompletedTaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isAudio = task.mediaType == MediaType.audio;
+    final formatColor =
+        isAudio ? AuraColors.audio(isDark) : AuraColors.video(isDark);
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
+    final divider = AuraColors.divider(isDark);
+    final primary = AuraColors.primary(isDark);
+    final errColor = AuraColors.error(isDark);
+
     final dateFormat = DateFormat('dd/MM/yyyy HH:mm');
     final formattedDate = task.completedAt != null
         ? dateFormat.format(task.completedAt!)
         : 'Reciente';
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : AppColors.lightCard,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.06),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
+    return AuraCard(
+      padding: const EdgeInsets.all(AuraDimensions.space4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -161,33 +159,33 @@ class CompletedTaskCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: AuraDimensions.radiusSmall,
                 child: Container(
-                  width: 50,
-                  height: 50,
-                  color: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
+                  width: 56,
+                  height: 56,
+                  color: formatColor.withValues(alpha: 0.14),
                   child: task.thumbnailUrl != null
                       ? Image.network(
                           task.thumbnailUrl!,
                           fit: BoxFit.cover,
-                          errorBuilder: (ctx, err, stack) => Icon(
-                            task.mediaType == MediaType.audio
+                          errorBuilder: (_, _, _) => Icon(
+                            isAudio
                                 ? Icons.music_note_rounded
-                                : Icons.movie_rounded,
-                            color: AppColors.accent,
+                                : Icons.videocam_rounded,
+                            color: formatColor,
                             size: 24,
                           ),
                         )
                       : Icon(
-                          task.mediaType == MediaType.audio
+                          isAudio
                               ? Icons.music_note_rounded
-                              : Icons.movie_rounded,
-                          color: AppColors.accent,
+                              : Icons.videocam_rounded,
+                          color: formatColor,
                           size: 24,
                         ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AuraDimensions.space3),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -196,73 +194,101 @@ class CompletedTaskCard extends StatelessWidget {
                       task.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.outfit(
-                        color: Theme.of(context).colorScheme.onSurface,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                      style: AuraTypography.label.copyWith(
+                        fontSize: 15,
+                        color: textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${Formatters.formatBytes(task.downloadedBytes)} · ${task.fileExtension.toUpperCase()} · $formattedDate',
-                      style: GoogleFonts.outfit(
-                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                        fontSize: 12,
-                      ),
+                    const SizedBox(height: AuraDimensions.space1),
+                    Wrap(
+                      spacing: AuraDimensions.space2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: formatColor.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            task.fileExtension.toUpperCase(),
+                            style: AuraTypography.metricSmall.copyWith(
+                              fontSize: 11,
+                              color: formatColor,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${Formatters.formatBytes(task.downloadedBytes)} · $formattedDate',
+                          style: AuraTypography.metricSmall.copyWith(
+                            color: textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Divider(
-            height: 1,
-            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-          ),
-          const SizedBox(height: 10),
-          // Action Buttons: Play, Share, Delete
+          const SizedBox(height: AuraDimensions.space3),
+          Divider(height: 1, color: divider),
+          const SizedBox(height: AuraDimensions.space3),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  icon: const Icon(Icons.play_arrow_rounded, size: 18, color: AppColors.accent),
+                  icon: Icon(
+                    Icons.play_arrow_rounded,
+                    size: 18,
+                    color: formatColor,
+                  ),
                   label: Text(
                     'Reproducir',
-                    style: GoogleFonts.outfit(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: AuraTypography.label.copyWith(color: textPrimary),
                   ),
                   style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    side: BorderSide(
-                      color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                    minimumSize: const Size(0, 44),
+                    side: BorderSide(color: divider),
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: AuraDimensions.radiusMedium,
                     ),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () => _openFile(context),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AuraDimensions.space2),
               IconButton(
-                icon: const Icon(Icons.share_rounded, color: AppColors.primary, size: 20),
+                icon: Icon(Icons.share_rounded, color: primary, size: 20),
                 onPressed: _shareFile,
                 tooltip: 'Compartir',
                 style: IconButton.styleFrom(
-                  backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  minimumSize: const Size(44, 44),
+                  backgroundColor: primary.withValues(alpha: 0.12),
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: AuraDimensions.radiusMedium,
+                  ),
                 ),
               ),
               const SizedBox(width: 6),
               IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error, size: 20),
+                icon: Icon(
+                  Icons.delete_outline_rounded,
+                  color: errColor,
+                  size: 20,
+                ),
                 onPressed: () => _showDeleteDialog(context),
                 tooltip: 'Eliminar',
                 style: IconButton.styleFrom(
-                  backgroundColor: AppColors.error.withValues(alpha: 0.1),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  minimumSize: const Size(44, 44),
+                  backgroundColor: errColor.withValues(alpha: 0.12),
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: AuraDimensions.radiusMedium,
+                  ),
                 ),
               ),
             ],

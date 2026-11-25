@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/constants/app_colors.dart';
+import '../../../../core/theme/aura_colors.dart';
+import '../../../../core/theme/aura_dimensions.dart';
+import '../../../../core/theme/aura_typography.dart';
+import '../../../../shared/widgets/aura_card.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_event.dart';
 import '../bloc/download_state.dart';
@@ -13,6 +15,8 @@ class CompletedTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final audioColor = AuraColors.audio(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -21,61 +25,64 @@ class CompletedTab extends StatelessWidget {
         return Column(
           children: [
             // Header Summary Banner
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.darkCard : AppColors.lightCard,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AuraDimensions.space4,
+                AuraDimensions.space3,
+                AuraDimensions.space4,
+                AuraDimensions.space2,
               ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.folder_special_rounded, color: AppColors.accent, size: 18),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '${completedList.length} archivo${completedList.length == 1 ? "" : "s"} guardado${completedList.length == 1 ? "" : "s"}',
-                      style: GoogleFonts.outfit(
-                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
+              child: AuraCard(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AuraDimensions.space4,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(
+                        color: audioColor.withValues(alpha: 0.15),
+                        borderRadius: AuraDimensions.radiusSmall,
+                      ),
+                      child: Icon(
+                        Icons.folder_special_rounded,
+                        color: audioColor,
+                        size: 18,
                       ),
                     ),
-                  ),
-                  if (completedList.isNotEmpty)
-                    TextButton.icon(
-                      icon: Icon(
-                        Icons.cleaning_services_rounded,
-                        size: 16,
-                        color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                      ),
-                      label: Text(
-                        'Limpiar',
-                        style: GoogleFonts.outfit(
-                          color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                          fontSize: 12,
+                    const SizedBox(width: AuraDimensions.space3),
+                    Expanded(
+                      child: Text(
+                        '${completedList.length} archivo${completedList.length == 1 ? "" : "s"} guardado${completedList.length == 1 ? "" : "s"}',
+                        style: AuraTypography.metricSmall.copyWith(
+                          color: textSecondary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      onPressed: () {
-                        context.read<DownloadBloc>().add(const ClearCompletedEvent());
-                      },
                     ),
-                ],
+                    if (completedList.isNotEmpty)
+                      TextButton.icon(
+                        icon: Icon(
+                          Icons.cleaning_services_rounded,
+                          size: 16,
+                          color: textSecondary,
+                        ),
+                        label: Text(
+                          'Limpiar',
+                          style: AuraTypography.label.copyWith(
+                            color: textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        onPressed: () {
+                          context
+                              .read<DownloadBloc>()
+                              .add(const ClearCompletedEvent());
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
 
@@ -84,9 +91,15 @@ class CompletedTab extends StatelessWidget {
               child: completedList.isEmpty
                   ? _buildEmptyState(context, isDark)
                   : ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.fromLTRB(
+                        AuraDimensions.space4,
+                        AuraDimensions.space2,
+                        AuraDimensions.space4,
+                        AuraDimensions.space4,
+                      ),
                       itemCount: completedList.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(height: AuraDimensions.space3),
                       itemBuilder: (context, index) {
                         final task = completedList[index];
                         return CompletedTaskCard(
@@ -111,48 +124,41 @@ class CompletedTab extends StatelessWidget {
   }
 
   Widget _buildEmptyState(BuildContext context, bool isDark) {
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
+    final audioColor = AuraColors.audio(isDark);
+
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
+        padding: const EdgeInsets.symmetric(horizontal: AuraDimensions.space8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: isDark ? AppColors.darkCard : AppColors.lightCard,
+                color: AuraColors.card(isDark),
                 shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
+                border: Border.all(color: AuraColors.divider(isDark)),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.folder_open_rounded,
-                size: 48,
-                color: AppColors.accent,
+                size: 46,
+                color: audioColor,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AuraDimensions.space5),
             Text(
               'No hay descargas completadas',
-              style: GoogleFonts.outfit(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+              style: AuraTypography.headingSmall.copyWith(color: textPrimary),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AuraDimensions.space2),
             Text(
-              'Tus archivos de video y audio aparecerán aquí para reproducirlos o compartirlos.',
+              'Tus archivos de audio y video aparecerán aquí para reproducirlos o compartirlos.',
               textAlign: TextAlign.center,
-              style: GoogleFonts.outfit(
-                color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                fontSize: 13,
-                height: 1.4,
+              style: AuraTypography.bodySmall.copyWith(
+                color: textSecondary,
+                height: 1.45,
               ),
             ),
           ],

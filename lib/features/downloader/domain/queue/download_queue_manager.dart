@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:medias_download/core/constants/app_constants.dart';
+import 'package:medias_download/core/services/audio_extractor_service.dart';
 import 'package:medias_download/core/services/background_service.dart';
+import 'package:medias_download/core/services/native_platform_service.dart';
 import 'package:medias_download/core/services/notification_service.dart';
+import 'package:medias_download/core/services/settings_service.dart';
 import 'package:medias_download/core/services/storage_service.dart';
 import 'package:medias_download/core/utils/formatters.dart';
-import 'package:medias_download/core/services/audio_extractor_service.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
 import 'package:medias_download/features/downloader/data/datasources/youtube_extractor.dart';
 import 'package:medias_download/features/downloader/data/models/download_task.dart';
@@ -15,6 +17,7 @@ class _ActiveTaskExecution {
   StreamSubscription? subscription;
   IOSink? sink;
   http.Client? httpClient;
+  String? tempPath;
   bool isCanceled = false;
   bool isPaused = false;
 }
@@ -23,11 +26,31 @@ class DownloadQueueManager {
   static DownloadQueueManager? _instance;
   static DownloadQueueManager get instance => _instance ??= DownloadQueueManager._();
 
+  /// Dedicated instance constructor for isolated background execution (`TaskHandler`).
+  factory DownloadQueueManager.isolated({
+    YoutubeExtractor? youtubeExtractor,
+    GenericExtractor? genericExtractor,
+    StorageService? storageService,
+    NotificationService? notificationService,
+    BackgroundService? backgroundService,
+    bool manageForegroundService = false,
+  }) {
+    return DownloadQueueManager._(
+      youtubeExtractor: youtubeExtractor,
+      genericExtractor: genericExtractor,
+      storageService: storageService,
+      notificationService: notificationService,
+      backgroundService: backgroundService,
+      manageForegroundService: manageForegroundService,
+    );
+  }
+
   final YoutubeExtractor _youtubeExtractor;
   final GenericExtractor _genericExtractor;
   final StorageService _storageService;
   final NotificationService _notificationService;
   final BackgroundService _backgroundService;
+  final bool manageForegroundService;
 
   int _maxConcurrentDownloads = AppConstants.defaultMaxConcurrentDownloads;
   final List<DownloadTask> _tasks = [];
@@ -42,6 +65,7 @@ class DownloadQueueManager {
     StorageService? storageService,
     NotificationService? notificationService,
     BackgroundService? backgroundService,
+    this.manageForegroundService = true,
   })  : _youtubeExtractor = youtubeExtractor ?? YoutubeExtractor(),
         _genericExtractor = genericExtractor ?? GenericExtractor(),
         _storageService = storageService ?? StorageService.instance,
@@ -53,15 +77,29 @@ class DownloadQueueManager {
   int get maxConcurrentDownloads => _maxConcurrentDownloads;
 
   void setMaxConcurrency(int limit) {
-    if (limit > 0 && limit != _maxConcurrentDownloads) {
-      _maxConcurrentDownloads = limit;
+    final clamped = limit.clamp(1, 4);
+    if (clamped != _maxConcurrentDownloads) {
+      _maxConcurrentDownloads = clamped;
       _processQueue();
     }
   }
 
+  /// Seed tasks from persistence before starting queue processing.
+  void seedTasks(List<DownloadTask> initialTasks) {
+    for (final task in initialTasks) {
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx >= 0) {
+        _tasks[idx] = task;
+      } else {
+        _tasks.add(task);
+      }
+    }
+    _notifyListeners();
+    _processQueue();
+  }
+
   /// Add a new task to queue
   void addTask(DownloadTask task) {
-    // Avoid duplicate tasks in active/queued list
     final existingIndex = _tasks.indexWhere((t) => t.id == task.id);
     if (existingIndex >= 0) {
       _tasks[existingIndex] = task;
@@ -81,6 +119,7 @@ class DownloadQueueManager {
     if (task.status == DownloadStatus.queued) {
       _tasks[index] = task.copyWith(status: DownloadStatus.paused);
       _notifyListeners();
+      _processQueue();
       return;
     }
 
@@ -114,7 +153,7 @@ class DownloadQueueManager {
     if (task.status == DownloadStatus.paused) {
       _tasks[index] = task.copyWith(
         status: DownloadStatus.queued,
-        errorMessage: null,
+        clearErrorMessage: true,
       );
       _notifyListeners();
       _processQueue();
@@ -134,19 +173,16 @@ class DownloadQueueManager {
       await execution.sink?.flush();
       await execution.sink?.close();
       execution.httpClient?.close();
+      if (execution.tempPath != null) {
+        await _safeDeleteFile(File(execution.tempPath!));
+      }
       _runningTasks.remove(taskId);
     }
 
     await _notificationService.cancelNotification(task.notificationId);
 
-    // Delete temp file if exists
     if (task.savedPath != null) {
-      final tempFile = File('${task.savedPath}.tmp');
-      if (await tempFile.exists()) {
-        try {
-          await tempFile.delete();
-        } catch (_) {}
-      }
+      await _safeDeleteFile(File('${task.savedPath}.tmp'));
     }
 
     _tasks[index] = task.copyWith(
@@ -167,7 +203,7 @@ class DownloadQueueManager {
       status: DownloadStatus.queued,
       downloadedBytes: 0,
       speedBytesPerSec: 0,
-      errorMessage: null,
+      clearErrorMessage: true,
     );
     _notifyListeners();
     _processQueue();
@@ -185,14 +221,12 @@ class DownloadQueueManager {
 
     if (deletePhysicalFile && task.savedPath != null) {
       await _storageService.deleteFile(task.savedPath!);
-      final tempFile = File('${task.savedPath}.tmp');
-      if (await tempFile.exists()) {
-        await tempFile.delete();
-      }
+      await _safeDeleteFile(File('${task.savedPath}.tmp'));
     }
 
     _tasks.removeWhere((t) => t.id == taskId);
     _notifyListeners();
+    _processQueue();
   }
 
   /// Clear all completed or canceled tasks from the list
@@ -203,21 +237,28 @@ class DownloadQueueManager {
 
   /// Main queue processor with concurrency throttling
   void _processQueue() {
-    final activeCount = _tasks.where((t) => t.status == DownloadStatus.downloading).length;
+    final activeCount =
+        _tasks.where((t) => t.status == DownloadStatus.downloading).length;
     if (activeCount >= _maxConcurrentDownloads) return;
 
     final slotsAvailable = _maxConcurrentDownloads - activeCount;
-    final queuedTasks = _tasks.where((t) => t.status == DownloadStatus.queued).take(slotsAvailable).toList();
+    final queuedTasks = _tasks
+        .where((t) => t.status == DownloadStatus.queued)
+        .take(slotsAvailable)
+        .toList();
 
     if (queuedTasks.isEmpty && activeCount == 0) {
-      // All tasks finished - stop foreground service
-      _backgroundService.stopService();
+      if (manageForegroundService) {
+        _backgroundService.stopService();
+      }
       return;
     }
 
-    if (activeCount > 0 || queuedTasks.isNotEmpty) {
+    if (manageForegroundService &&
+        (activeCount > 0 || queuedTasks.isNotEmpty)) {
       _backgroundService.startService(
-        statusText: 'Descargas activas: $activeCount | En espera: ${_tasks.where((t) => t.status == DownloadStatus.queued).length}',
+        statusText:
+            'Descargas activas: $activeCount | En espera: ${_tasks.where((t) => t.status == DownloadStatus.queued).length}',
       );
     }
 
@@ -231,10 +272,9 @@ class DownloadQueueManager {
     final taskIndex = _tasks.indexWhere((t) => t.id == task.id);
     if (taskIndex == -1) return;
 
-    // Mark as downloading
     _tasks[taskIndex] = task.copyWith(
       status: DownloadStatus.downloading,
-      errorMessage: null,
+      clearErrorMessage: true,
     );
     _notifyListeners();
 
@@ -246,11 +286,48 @@ class DownloadQueueManager {
     File? finalFile;
 
     try {
+      // Safe settings load (no-op if SettingsService not initialized in pure Dart unit tests)
+      final settingsReady = await _ensureSettingsSafe();
+      final wifiOnly =
+          settingsReady ? SettingsService.instance.getWifiOnly() : false;
+      final audioExtPref = settingsReady
+          ? SettingsService.instance.getAudioFormat().name
+          : 'mp3';
+      final includeAuthor = settingsReady
+          ? SettingsService.instance.getIncludeAuthorInFilename()
+          : false;
+      final duplicatePolicy = settingsReady
+          ? SettingsService.instance.getDuplicatePolicy()
+          : DuplicateFilePolicy.rename;
+      final scanMedia = settingsReady
+          ? SettingsService.instance.getScanMediaLibrary()
+          : true;
+
+      // Enforce Wi-Fi only preference on Android
+      if (wifiOnly && Platform.isAndroid) {
+        final onWifi = await NativePlatformService.instance.isWifiConnected();
+        if (!onWifi) {
+          _runningTasks.remove(task.id);
+          final idx = _tasks.indexWhere((t) => t.id == task.id);
+          if (idx >= 0) {
+            _tasks[idx] = _tasks[idx].copyWith(
+              status: DownloadStatus.paused,
+              speedBytesPerSec: 0.0,
+              errorMessage: 'En pausa: esperando conexión Wi-Fi',
+            );
+            _notifyListeners();
+          }
+          _processQueue();
+          return;
+        }
+      }
+
       // 1. Resolve Stream
       Stream<List<int>> stream;
       int totalBytes = task.totalBytes;
       int containerTotalBytes = task.totalBytes;
-      String effectiveExtension = task.fileExtension;
+      String effectiveExtension =
+          task.mediaType == MediaType.audio ? audioExtPref : task.fileExtension;
       bool requiresAudioExtraction = false;
 
       if (YoutubeExtractor.isYoutubeUrl(task.url)) {
@@ -258,6 +335,7 @@ class DownloadQueueManager {
           url: task.url,
           mediaType: task.mediaType,
           quality: task.quality,
+          audioExtension: audioExtPref,
         );
         stream = resolved.stream;
         totalBytes = resolved.totalBytes;
@@ -278,39 +356,48 @@ class DownloadQueueManager {
         }
 
         final httpClient = http.Client();
+        execution.httpClient = httpClient;
         final request = http.Request('GET', Uri.parse(genericResult.streamUrl));
         final response = await httpClient.send(request);
         stream = response.stream;
       }
 
-      // 2. Prepare target file paths with correct extension
-      final sanitizedTitle = Formatters.sanitizeFileName(task.title);
+      // 2. Prepare target file paths (separate Audio/Video directories & temp in cache)
+      final baseTitle = _buildFileBaseName(
+        title: task.title,
+        author: task.author,
+        includeAuthor: includeAuthor,
+      );
+      final sanitizedTitle = Formatters.sanitizeFileName(baseTitle);
       final finalFileName = '$sanitizedTitle.$effectiveExtension';
-      final finalPath = await _storageService.getTargetPath(finalFileName);
-      final tempPath = '$finalPath.tmp';
+      final finalPath = await _storageService.getTargetPath(
+        finalFileName,
+        mediaType: task.mediaType,
+        duplicatePolicy: duplicatePolicy,
+      );
+      final tempPath = await _storageService.getTempDownloadPath(task.id);
+      execution.tempPath = tempPath;
 
       finalFile = File(finalPath);
       tempFile = File(tempPath);
 
-      if (await tempFile.exists()) {
-        try {
-          await tempFile.delete();
-        } catch (_) {}
-      }
+      await _safeDeleteFile(tempFile);
 
       sink = tempFile.openWrite(mode: FileMode.writeOnly);
+      execution.sink = sink;
 
-      // Update total bytes if known
+      // Update total bytes and resolved path
       final currentIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (currentIndex >= 0) {
         _tasks[currentIndex] = _tasks[currentIndex].copyWith(
           totalBytes: totalBytes,
+          fileExtension: effectiveExtension,
           savedPath: finalPath,
         );
         _notifyListeners();
       }
 
-      // 3. Pipe stream into file with throttled metrics calculation
+      // 3. Pipe stream into temp file with throttled metrics calculation
       int downloadedContainerBytes = 0;
       int virtualDownloadedBytes = 0;
       int lastDownloadedContainerBytes = 0;
@@ -328,11 +415,11 @@ class DownloadQueueManager {
 
         final now = DateTime.now();
 
-        // Speed calculation every 1000ms
         final speedInterval = now.difference(lastSpeedCheck).inMilliseconds;
         if (speedInterval >= 1000) {
-          final bytesDiff = downloadedContainerBytes - lastDownloadedContainerBytes;
-          final physicalSpeed = (bytesDiff / (speedInterval / 1000));
+          final bytesDiff =
+              downloadedContainerBytes - lastDownloadedContainerBytes;
+          final physicalSpeed = bytesDiff / (speedInterval / 1000);
           currentSpeed = (containerTotalBytes > 0 && totalBytes != containerTotalBytes)
               ? physicalSpeed * (totalBytes / containerTotalBytes)
               : physicalSpeed;
@@ -340,13 +427,11 @@ class DownloadQueueManager {
           lastSpeedCheck = now;
         }
 
-        // Virtual downloaded bytes proportionally matching totalBytes
         final progressRatio = containerTotalBytes > 0
             ? (downloadedContainerBytes / containerTotalBytes).clamp(0.0, 1.0)
             : 0.0;
         virtualDownloadedBytes = (progressRatio * totalBytes).round();
 
-        // Throttle UI and Notification updates every 400ms
         if (now.difference(lastNotificationUpdate).inMilliseconds >= 400) {
           lastNotificationUpdate = now;
           final idx = _tasks.indexWhere((t) => t.id == task.id);
@@ -357,11 +442,11 @@ class DownloadQueueManager {
             );
             _notifyListeners();
 
-            // Native notification update
             final percent = _tasks[idx].progressPercent;
             final speedLabel = Formatters.formatSpeed(currentSpeed);
             final downloadedLabel = Formatters.formatBytes(virtualDownloadedBytes);
-            final totalLabel = totalBytes > 0 ? Formatters.formatBytes(totalBytes) : '...';
+            final totalLabel =
+                totalBytes > 0 ? Formatters.formatBytes(totalBytes) : '...';
 
             _notificationService.showProgressNotification(
               id: task.notificationId,
@@ -375,34 +460,47 @@ class DownloadQueueManager {
 
       await sink.flush();
       await sink.close();
+      execution.sink = null;
 
-      // If user paused or canceled, stop here
       if (execution.isCanceled || execution.isPaused) {
         return;
       }
 
-      // 4. Rename temp file to final file (or extract audio if required)
+      // 4. Move temp file to final destination (or extract audio track)
       if (await tempFile.exists()) {
         if (requiresAudioExtraction && Platform.isAndroid) {
           final extracted = await AudioExtractorService.extractAudio(
             inputPath: tempPath,
             outputPath: finalPath,
           );
-          try {
-            await tempFile.delete();
-          } catch (_) {}
           if (!extracted) {
-            await tempFile.rename(finalPath);
+            await _moveFileSafely(tempFile, finalPath);
+          } else {
+            await _safeDeleteFile(tempFile);
           }
         } else {
           if (await finalFile.exists()) {
-            await finalFile.delete();
+            await _safeDeleteFile(finalFile);
           }
-          await tempFile.rename(finalPath);
+          await _moveFileSafely(tempFile, finalPath);
         }
       }
 
-      // 5. Mark as completed
+      // 5. Notify Android MediaScanner so music players & galleries index the file
+      if (scanMedia && Platform.isAndroid) {
+        final mimeType = switch (effectiveExtension.toLowerCase()) {
+          'mp3' => 'audio/mpeg',
+          'm4a' => 'audio/mp4',
+          'mp4' => 'video/mp4',
+          _ => null,
+        };
+        await NativePlatformService.instance.scanMediaFile(
+          finalPath,
+          mimeType: mimeType,
+        );
+      }
+
+      // 6. Mark as completed
       final actualFinalBytes = (await finalFile.exists())
           ? await finalFile.length()
           : virtualDownloadedBytes;
@@ -422,14 +520,12 @@ class DownloadQueueManager {
 
       _runningTasks.remove(task.id);
 
-      // 6. Show success notification
       await _notificationService.showCompletedNotification(
         id: task.notificationId,
         title: task.title,
         filePath: finalPath,
       );
 
-      // Process next queued task
       _processQueue();
     } catch (e) {
       if (execution.isCanceled || execution.isPaused) return;
@@ -438,6 +534,10 @@ class DownloadQueueManager {
         await sink?.flush();
         await sink?.close();
       } catch (_) {}
+
+      if (tempFile != null) {
+        await _safeDeleteFile(tempFile);
+      }
 
       final errIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (errIndex >= 0) {
@@ -457,9 +557,57 @@ class DownloadQueueManager {
         error: e.toString().replaceFirst('Exception: ', ''),
       );
 
-      // Continue queue
       _processQueue();
     }
+  }
+
+  Future<bool> _ensureSettingsSafe() async {
+    try {
+      await SettingsService.instance.reload();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _buildFileBaseName({
+    required String title,
+    required String? author,
+    required bool includeAuthor,
+  }) {
+    if (!includeAuthor || author == null) return title;
+    final cleanAuthor = author.trim();
+    if (cleanAuthor.isEmpty ||
+        cleanAuthor == 'YouTube' ||
+        cleanAuthor == 'Web Directo') {
+      return title;
+    }
+    if (title.toLowerCase().contains(cleanAuthor.toLowerCase())) {
+      return title;
+    }
+    return '$cleanAuthor - $title';
+  }
+
+  /// Moves a file safely across mount points (falls back to copy+delete on EXDEV).
+  Future<void> _moveFileSafely(File source, String destinationPath) async {
+    final destFile = File(destinationPath);
+    if (destFile.parent != source.parent && !await destFile.parent.exists()) {
+      await destFile.parent.create(recursive: true);
+    }
+    try {
+      await source.rename(destinationPath);
+    } on FileSystemException {
+      await source.copy(destinationPath);
+      await _safeDeleteFile(source);
+    }
+  }
+
+  Future<void> _safeDeleteFile(File file) async {
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
   }
 
   void _notifyListeners() {
@@ -477,6 +625,6 @@ class DownloadQueueManager {
     _runningTasks.clear();
     _tasksController.close();
     _youtubeExtractor.close();
+    _genericExtractor.close();
   }
 }
-

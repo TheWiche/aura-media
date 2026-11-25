@@ -253,6 +253,7 @@ class YoutubeExtractor {
     required String url,
     required MediaType mediaType,
     VideoQuality quality = VideoQuality.best,
+    String audioExtension = 'mp3',
   }) async {
     try {
       final videoIdStr = extractVideoId(url) ?? url.trim();
@@ -287,7 +288,7 @@ class YoutubeExtractor {
             stream: stream,
             totalBytes: estimatedAudioBytes,
             containerTotalBytes: selectedStream.size.totalBytes,
-            extension: 'mp3',
+            extension: audioExtension,
             requiresAudioExtraction: true,
           );
         }
@@ -311,7 +312,7 @@ class YoutubeExtractor {
           streamInfo: bestAudio,
           stream: stream,
           totalBytes: bestAudio.size.totalBytes,
-          extension: 'mp3',
+          extension: audioExtension,
           requiresAudioExtraction: false,
         );
       } else {

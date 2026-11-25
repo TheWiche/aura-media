@@ -3,47 +3,94 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/app_constants.dart';
 import '../../features/downloader/data/models/download_task.dart';
 
+enum ShareBehavior {
+  modal,
+  autoDownload,
+  openApp,
+}
+
+enum AudioFileFormat {
+  mp3,
+  m4a,
+}
+
+enum DuplicateFilePolicy {
+  rename,
+  overwrite,
+}
+
 /// SettingsService — singleton wrapper around SharedPreferences.
-/// Stores and retrieves user-facing app preferences.
+/// Stores and retrieves user-facing app preferences across isolates.
 class SettingsService {
   SettingsService._();
   static final SettingsService instance = SettingsService._();
 
   SharedPreferences? _prefs;
 
+  /// Increments whenever any preference changes so listeners (e.g. HomeTab) stay synced.
+  final ValueNotifier<int> changesNotifier = ValueNotifier<int>(0);
+
   Future<void> initialize() async {
     _prefs ??= await SharedPreferences.getInstance();
   }
 
-  SharedPreferences get _p {
-    assert(_prefs != null, 'SettingsService.initialize() must be called first');
-    return _prefs!;
+  /// Reloads preferences from disk (essential when reading from background Isolate).
+  Future<void> reload() async {
+    await initialize();
+    await _prefs?.reload();
+  }
+
+  bool get isInitialized => _prefs != null;
+
+  SharedPreferences? get _pOrNull => _prefs;
+
+  void _notifyChanged() {
+    changesNotifier.value++;
   }
 
   // ─── Theme ─────────────────────────────────────────────────────────────────
 
   ThemeMode getThemeMode() {
-    final raw = _p.getString(AppConstants.prefThemeMode);
+    final raw = _pOrNull?.getString(AppConstants.prefThemeMode);
     return switch (raw) {
       'light' => ThemeMode.light,
       'dark' => ThemeMode.dark,
-      _ => ThemeMode.dark, // default: dark
+      'system' => ThemeMode.system,
+      _ => ThemeMode.system,
     };
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
+    await initialize();
     final raw = switch (mode) {
       ThemeMode.light => 'light',
       ThemeMode.dark => 'dark',
       ThemeMode.system => 'system',
     };
-    await _p.setString(AppConstants.prefThemeMode, raw);
+    await _prefs!.setString(AppConstants.prefThemeMode, raw);
+    _notifyChanged();
   }
 
-  // ─── Default Quality ────────────────────────────────────────────────────────
+  // ─── Default Format & Quality ──────────────────────────────────────────────
+
+  MediaType getDefaultMediaType() {
+    final raw = _pOrNull?.getString(AppConstants.prefDefaultMediaType);
+    return switch (raw) {
+      'video' => MediaType.video,
+      'audio' => MediaType.audio,
+      _ => MediaType.audio, // Default: Solo Audio
+    };
+  }
+
+  Future<void> setDefaultMediaType(MediaType type) async {
+    await initialize();
+    final raw = type == MediaType.video ? 'video' : 'audio';
+    await _prefs!.setString(AppConstants.prefDefaultMediaType, raw);
+    _notifyChanged();
+  }
 
   VideoQuality getDefaultQuality() {
-    final raw = _p.getString(AppConstants.prefDefaultQuality);
+    final raw = _pOrNull?.getString(AppConstants.prefDefaultQuality);
     return switch (raw) {
       'best' => VideoQuality.best,
       'p1080' => VideoQuality.p1080,
@@ -55,6 +102,7 @@ class SettingsService {
   }
 
   Future<void> setDefaultQuality(VideoQuality quality) async {
+    await initialize();
     final raw = switch (quality) {
       VideoQuality.best => 'best',
       VideoQuality.p1080 => 'p1080',
@@ -62,7 +110,157 @@ class SettingsService {
       VideoQuality.p480 => 'p480',
       VideoQuality.p360 => 'p360',
     };
-    await _p.setString(AppConstants.prefDefaultQuality, raw);
+    await _prefs!.setString(AppConstants.prefDefaultQuality, raw);
+    _notifyChanged();
+  }
+
+  // ─── Share Modal Behavior ──────────────────────────────────────────────────
+
+  ShareBehavior getShareBehavior() {
+    final raw = _pOrNull?.getString(AppConstants.prefShareBehavior);
+    return switch (raw) {
+      'auto_download' => ShareBehavior.autoDownload,
+      'open_app' => ShareBehavior.openApp,
+      _ => ShareBehavior.modal,
+    };
+  }
+
+  Future<void> setShareBehavior(ShareBehavior behavior) async {
+    await initialize();
+    final raw = switch (behavior) {
+      ShareBehavior.modal => 'modal',
+      ShareBehavior.autoDownload => 'auto_download',
+      ShareBehavior.openApp => 'open_app',
+    };
+    await _prefs!.setString(AppConstants.prefShareBehavior, raw);
+    _notifyChanged();
+  }
+
+  bool getAutoCloseShareModal() {
+    return _pOrNull?.getBool(AppConstants.prefAutoCloseShareModal) ?? true;
+  }
+
+  Future<void> setAutoCloseShareModal(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefAutoCloseShareModal, value);
+    _notifyChanged();
+  }
+
+  // ─── Download Directories (Separate Audio & Video) ─────────────────────────
+
+  String? getAudioDownloadPath() {
+    final path = _pOrNull?.getString(AppConstants.prefAudioDownloadPath)?.trim();
+    return (path == null || path.isEmpty) ? null : path;
+  }
+
+  Future<void> setAudioDownloadPath(String? path) async {
+    await initialize();
+    if (path == null || path.trim().isEmpty) {
+      await _prefs!.remove(AppConstants.prefAudioDownloadPath);
+    } else {
+      await _prefs!.setString(AppConstants.prefAudioDownloadPath, path.trim());
+    }
+    _notifyChanged();
+  }
+
+  String? getVideoDownloadPath() {
+    final path = _pOrNull?.getString(AppConstants.prefVideoDownloadPath)?.trim();
+    return (path == null || path.isEmpty) ? null : path;
+  }
+
+  Future<void> setVideoDownloadPath(String? path) async {
+    await initialize();
+    if (path == null || path.trim().isEmpty) {
+      await _prefs!.remove(AppConstants.prefVideoDownloadPath);
+    } else {
+      await _prefs!.setString(AppConstants.prefVideoDownloadPath, path.trim());
+    }
+    _notifyChanged();
+  }
+
+  // ─── File & Naming Options ─────────────────────────────────────────────────
+
+  AudioFileFormat getAudioFormat() {
+    final raw = _pOrNull?.getString(AppConstants.prefAudioFormat);
+    return raw == 'm4a' ? AudioFileFormat.m4a : AudioFileFormat.mp3;
+  }
+
+  Future<void> setAudioFormat(AudioFileFormat format) async {
+    await initialize();
+    await _prefs!.setString(
+      AppConstants.prefAudioFormat,
+      format == AudioFileFormat.m4a ? 'm4a' : 'mp3',
+    );
+    _notifyChanged();
+  }
+
+  DuplicateFilePolicy getDuplicatePolicy() {
+    final raw = _pOrNull?.getString(AppConstants.prefDuplicatePolicy);
+    return raw == 'overwrite'
+        ? DuplicateFilePolicy.overwrite
+        : DuplicateFilePolicy.rename;
+  }
+
+  Future<void> setDuplicatePolicy(DuplicateFilePolicy policy) async {
+    await initialize();
+    await _prefs!.setString(
+      AppConstants.prefDuplicatePolicy,
+      policy == DuplicateFilePolicy.overwrite ? 'overwrite' : 'rename',
+    );
+    _notifyChanged();
+  }
+
+  bool getIncludeAuthorInFilename() {
+    return _pOrNull?.getBool(AppConstants.prefIncludeAuthorInFilename) ?? false;
+  }
+
+  Future<void> setIncludeAuthorInFilename(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefIncludeAuthorInFilename, value);
+    _notifyChanged();
+  }
+
+  bool getScanMediaLibrary() {
+    return _pOrNull?.getBool(AppConstants.prefScanMediaLibrary) ?? true;
+  }
+
+  Future<void> setScanMediaLibrary(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefScanMediaLibrary, value);
+    _notifyChanged();
+  }
+
+  // ─── Queue, Network & History ──────────────────────────────────────────────
+
+  bool getWifiOnly() {
+    return _pOrNull?.getBool(AppConstants.prefWifiOnly) ?? false;
+  }
+
+  Future<void> setWifiOnly(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefWifiOnly, value);
+    _notifyChanged();
+  }
+
+  int getMaxConcurrentDownloads() {
+    final val = _pOrNull?.getInt(AppConstants.prefMaxConcurrentDownloads) ??
+        AppConstants.defaultMaxConcurrentDownloads;
+    return val.clamp(1, 4);
+  }
+
+  Future<void> setMaxConcurrentDownloads(int value) async {
+    await initialize();
+    await _prefs!.setInt(AppConstants.prefMaxConcurrentDownloads, value.clamp(1, 4));
+    _notifyChanged();
+  }
+
+  bool getSaveDownloadHistory() {
+    return _pOrNull?.getBool(AppConstants.prefSaveDownloadHistory) ?? true;
+  }
+
+  Future<void> setSaveDownloadHistory(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefSaveDownloadHistory, value);
+    _notifyChanged();
   }
 }
-

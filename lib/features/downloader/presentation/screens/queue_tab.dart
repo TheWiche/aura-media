@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/constants/app_colors.dart';
+import '../../../../core/theme/aura_colors.dart';
+import '../../../../core/theme/aura_dimensions.dart';
+import '../../../../core/theme/aura_typography.dart';
+import '../../../../shared/widgets/aura_button.dart';
+import '../../../../shared/widgets/aura_card.dart';
+import '../../../../shared/widgets/aura_download_card.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_event.dart';
 import '../bloc/download_state.dart';
-import '../widgets/download_task_card.dart';
 
 class QueueTab extends StatelessWidget {
   final VoidCallback onNavigateToHome;
@@ -18,6 +21,10 @@ class QueueTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
+    final primary = AuraColors.primary(isDark);
+    final audioColor = AuraColors.audio(isDark);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -25,107 +32,189 @@ class QueueTab extends StatelessWidget {
 
         return Column(
           children: [
-            // Concurrency & Header Banner
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.darkCard : AppColors.lightCard,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
+            // Concurrency selector header card
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AuraDimensions.space4,
+                AuraDimensions.space3,
+                AuraDimensions.space4,
+                AuraDimensions.space2,
               ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: AppColors.secondary.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.sync_alt_rounded, color: AppColors.secondary, size: 18),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Límite de concurrencia:',
-                      style: GoogleFonts.outfit(
-                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
+              child: AuraCard(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AuraDimensions.space4,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(
+                        color: AuraColors.secondary(isDark)
+                            .withValues(alpha: 0.15),
+                        borderRadius: AuraDimensions.radiusSmall,
+                      ),
+                      child: Icon(
+                        Icons.sync_alt_rounded,
+                        color: AuraColors.secondary(isDark),
+                        size: 18,
                       ),
                     ),
-                  ),
-                  // Concurrency dropdown selector
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
-                      borderRadius: BorderRadius.circular(10),
+                    const SizedBox(width: AuraDimensions.space3),
+                    Expanded(
+                      child: Text(
+                        'Límite de concurrencia',
+                        style: AuraTypography.label.copyWith(
+                          color: textSecondary,
+                        ),
+                      ),
                     ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<int>(
-                        value: state.concurrencyLimit,
-                        dropdownColor: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
-                        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.primary, size: 18),
-                        isDense: true,
-                        items: [1, 2, 3, 4].map((limit) {
-                          return DropdownMenuItem<int>(
-                            value: limit,
-                            child: Text(
-                              '$limit a la vez',
-                              style: GoogleFonts.outfit(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? AuraColors.darkSurface
+                            : AuraColors.lightBackground,
+                        borderRadius: AuraDimensions.radiusSmall,
+                        border: Border.all(
+                          color: AuraColors.divider(isDark),
+                          width: 1,
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<int>(
+                          value: state.concurrencyLimit,
+                          dropdownColor: AuraColors.surface(isDark),
+                          icon: Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: primary,
+                            size: 18,
+                          ),
+                          isDense: true,
+                          items: [1, 2, 3, 4].map((limit) {
+                            return DropdownMenuItem<int>(
+                              value: limit,
+                              child: Text(
+                                '$limit a la vez',
+                                style: AuraTypography.metricSmall.copyWith(
+                                  color: textPrimary,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) {
-                            context.read<DownloadBloc>().add(UpdateConcurrencyLimitEvent(val));
-                          }
-                        },
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              context
+                                  .read<DownloadBloc>()
+                                  .add(UpdateConcurrencyLimitEvent(val));
+                            }
+                          },
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
 
-            // Queue List or Empty State
+            // Active queue list or empty state
             Expanded(
               child: activeList.isEmpty
                   ? _buildEmptyState(context, isDark)
                   : ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      itemCount: activeList.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
+                      padding: const EdgeInsets.fromLTRB(
+                        AuraDimensions.space4,
+                        AuraDimensions.space2,
+                        AuraDimensions.space4,
+                        AuraDimensions.space4,
+                      ),
+                      itemCount: activeList.length + 1,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(height: AuraDimensions.space3),
                       itemBuilder: (context, index) {
+                        if (index == activeList.length) {
+                          return AuraCard(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AuraDimensions.space4,
+                              vertical: AuraDimensions.space3,
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 28,
+                                  height: 28,
+                                  decoration: BoxDecoration(
+                                    color: audioColor.withValues(alpha: 0.16),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.check_rounded,
+                                    color: audioColor,
+                                    size: 16,
+                                  ),
+                                ),
+                                const SizedBox(width: AuraDimensions.space3),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Descargas en segundo plano',
+                                        style: AuraTypography.label.copyWith(
+                                          color: textPrimary,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Puedes seguir usando otras apps',
+                                        style: AuraTypography.bodySmall
+                                            .copyWith(color: textSecondary),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.bolt_rounded,
+                                  color: primary,
+                                  size: 20,
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
                         final task = activeList[index];
-                        return DownloadTaskCard(
+                        return AuraDownloadCard(
                           key: ValueKey(task.id),
                           task: task,
                           onPause: () {
-                            context.read<DownloadBloc>().add(PauseDownloadEvent(task.id));
+                            context
+                                .read<DownloadBloc>()
+                                .add(PauseDownloadEvent(task.id));
                           },
                           onResume: () {
-                            context.read<DownloadBloc>().add(ResumeDownloadEvent(task.id));
+                            context
+                                .read<DownloadBloc>()
+                                .add(ResumeDownloadEvent(task.id));
                           },
                           onCancel: () {
-                            context.read<DownloadBloc>().add(CancelDownloadEvent(task.id));
+                            context
+                                .read<DownloadBloc>()
+                                .add(CancelDownloadEvent(task.id));
                           },
                           onRetry: () {
-                            context.read<DownloadBloc>().add(RetryDownloadEvent(task.id));
+                            context
+                                .read<DownloadBloc>()
+                                .add(RetryDownloadEvent(task.id));
                           },
                           onRemove: () {
-                            context.read<DownloadBloc>().add(RemoveTaskEvent(task.id));
+                            context
+                                .read<DownloadBloc>()
+                                .add(RemoveTaskEvent(task.id));
                           },
                         );
                       },
@@ -138,62 +227,50 @@ class QueueTab extends StatelessWidget {
   }
 
   Widget _buildEmptyState(BuildContext context, bool isDark) {
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
+    final primary = AuraColors.primary(isDark);
+
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
+        padding: const EdgeInsets.symmetric(horizontal: AuraDimensions.space8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: isDark ? AppColors.darkCard : AppColors.lightCard,
+                color: AuraColors.card(isDark),
                 shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
+                border: Border.all(color: AuraColors.divider(isDark)),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.check_circle_outline_rounded,
-                size: 48,
-                color: AppColors.primary,
+                size: 46,
+                color: primary,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AuraDimensions.space5),
             Text(
               'No hay descargas en curso',
-              style: GoogleFonts.outfit(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+              style: AuraTypography.headingSmall.copyWith(color: textPrimary),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AuraDimensions.space2),
             Text(
               'Las tareas que agregues aparecerán aquí y se procesarán según el límite configurado.',
               textAlign: TextAlign.center,
-              style: GoogleFonts.outfit(
-                color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                fontSize: 13,
-                height: 1.4,
+              style: AuraTypography.bodySmall.copyWith(
+                color: textSecondary,
+                height: 1.45,
               ),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: onNavigateToHome,
-              icon: const Icon(Icons.add_link_rounded, size: 18),
-              label: Text(
-                'Agregar un enlace',
-                style: GoogleFonts.outfit(fontWeight: FontWeight.w600),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            const SizedBox(height: AuraDimensions.space6),
+            SizedBox(
+              width: 220,
+              child: AuraButton(
+                label: 'Agregar un enlace',
+                icon: Icons.add_link_rounded,
+                onPressed: onNavigateToHome,
               ),
             ),
           ],

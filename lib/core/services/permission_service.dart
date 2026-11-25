@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class PermissionService {
@@ -15,23 +16,50 @@ class PermissionService {
     return result.isGranted;
   }
 
+  /// Check if notification permission is granted
+  Future<bool> hasNotificationPermission() async {
+    return await Permission.notification.isGranted;
+  }
+
+  /// Check if the app has full or media storage permission
+  Future<bool> hasStoragePermission() async {
+    if (!Platform.isAndroid) return true;
+    if (await Permission.manageExternalStorage.isGranted) return true;
+    if (await Permission.storage.isGranted) return true;
+    if (await Permission.audio.isGranted && await Permission.videos.isGranted) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Check if MANAGE_EXTERNAL_STORAGE is granted (needed for custom folders on Android 11+)
+  Future<bool> hasManageExternalStorage() async {
+    if (!Platform.isAndroid) return true;
+    return await Permission.manageExternalStorage.isGranted;
+  }
+
+  /// Request MANAGE_EXTERNAL_STORAGE permission (opens All Files Access on Android 11+)
+  Future<bool> requestManageExternalStorage() async {
+    if (!Platform.isAndroid) return true;
+    final status = await Permission.manageExternalStorage.status;
+    if (status.isGranted) return true;
+    final result = await Permission.manageExternalStorage.request();
+    return result.isGranted;
+  }
+
   /// Request storage permissions based on platform and OS version
   Future<bool> requestStoragePermission() async {
     if (!Platform.isAndroid) {
-      // iOS manages its sandbox via Info.plist and Documents directory
       return true;
     }
 
-    // Android: check legacy storage or media permissions
-    final storageStatus = await Permission.storage.status;
-    if (storageStatus.isGranted) return true;
+    if (await Permission.manageExternalStorage.isGranted) return true;
+    if (await Permission.storage.isGranted) return true;
 
-    // Check media permissions (Android 13+)
     final audioStatus = await Permission.audio.status;
     final videoStatus = await Permission.videos.status;
     if (audioStatus.isGranted && videoStatus.isGranted) return true;
 
-    // Try requesting storage & media
     final Map<Permission, PermissionStatus> statuses = await [
       Permission.storage,
       Permission.audio,
@@ -44,23 +72,36 @@ class PermissionService {
 
     if (granted) return true;
 
-    // Optional check for MANAGE_EXTERNAL_STORAGE on Android 11+ (API 30+)
-    final manageStatus = await Permission.manageExternalStorage.status;
-    if (manageStatus.isGranted) return true;
+    return await Permission.manageExternalStorage.isGranted;
+  }
 
-    return false;
+  /// Check if Android battery optimization is disabled for Aura
+  Future<bool> isBatteryOptimizationIgnored() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      return await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Request exemption from Android battery optimizations so background downloads survive
+  Future<bool> requestIgnoreBatteryOptimization() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      if (await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+        return true;
+      }
+      return await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Check whether all necessary permissions are granted
   Future<bool> hasAllPermissions() async {
     final notifGranted = await Permission.notification.isGranted;
-    if (Platform.isAndroid) {
-      final storageGranted = await Permission.storage.isGranted ||
-          (await Permission.audio.isGranted && await Permission.videos.isGranted) ||
-          await Permission.manageExternalStorage.isGranted;
-      return notifGranted && storageGranted;
-    }
-    return notifGranted;
+    final storageGranted = await hasStoragePermission();
+    return notifGranted && storageGranted;
   }
 }
-

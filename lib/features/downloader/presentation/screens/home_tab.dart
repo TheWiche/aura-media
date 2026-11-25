@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/settings_service.dart';
+import '../../../../core/theme/aura_colors.dart';
+import '../../../../core/theme/aura_dimensions.dart';
+import '../../../../core/theme/aura_typography.dart';
+import '../../../../shared/widgets/aura_button.dart';
+import '../../../../shared/widgets/aura_card.dart';
+import '../../../../shared/widgets/aura_format_selector.dart';
 import '../../data/datasources/youtube_extractor.dart';
 import '../../data/models/download_task.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_event.dart';
 import '../bloc/download_state.dart';
-import '../widgets/format_selector_chip.dart';
 import '../widgets/media_preview_card.dart';
 
 class HomeTab extends StatefulWidget {
@@ -28,13 +31,15 @@ class HomeTab extends StatefulWidget {
 
 class HomeTabState extends State<HomeTab> {
   final TextEditingController _urlController = TextEditingController();
-  MediaType _selectedMediaType = MediaType.video;
+  late MediaType _selectedMediaType;
   late VideoQuality _selectedQuality;
+  late String _audioExtensionLabel;
 
   @override
   void initState() {
     super.initState();
-    _selectedQuality = SettingsService.instance.getDefaultQuality();
+    _syncFromSettings();
+    SettingsService.instance.changesNotifier.addListener(_onSettingsChanged);
 
     if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -43,8 +48,23 @@ class HomeTabState extends State<HomeTab> {
     }
   }
 
+  void _syncFromSettings() {
+    _selectedMediaType = SettingsService.instance.getDefaultMediaType();
+    _selectedQuality = SettingsService.instance.getDefaultQuality();
+    _audioExtensionLabel =
+        SettingsService.instance.getAudioFormat().name.toUpperCase();
+  }
+
+  void _onSettingsChanged() {
+    if (!mounted) return;
+    setState(() {
+      _syncFromSettings();
+    });
+  }
+
   @override
   void dispose() {
+    SettingsService.instance.changesNotifier.removeListener(_onSettingsChanged);
     _urlController.dispose();
     super.dispose();
   }
@@ -90,16 +110,17 @@ class HomeTabState extends State<HomeTab> {
     _urlController.clear();
     context.read<DownloadBloc>().add(const ClearMetadataEvent());
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           '¡Añadido a la cola de descargas!',
-          style: GoogleFonts.outfit(fontWeight: FontWeight.w500),
+          style: AuraTypography.bodyMedium.copyWith(
+            color: AuraColors.textPrimary(isDark),
+            fontWeight: FontWeight.w500,
+          ),
         ),
-        backgroundColor: AppColors.accent,
         duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -107,157 +128,145 @@ class HomeTabState extends State<HomeTab> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textPrimary = AuraColors.textPrimary(isDark);
+    final textSecondary = AuraColors.textSecondary(isDark);
+    final primary = AuraColors.primary(isDark);
+    final divider = AuraColors.divider(isDark);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
         final hasMetadata = state.previewMetadata != null;
 
         return SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AuraDimensions.space5,
+            vertical: AuraDimensions.space5,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // ── Hero header ────────────────────────────────────────────────
               Text(
                 'Descargar contenido',
-                style: GoogleFonts.outfit(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
-                  letterSpacing: -0.5,
-                ),
+                style: AuraTypography.headingLarge.copyWith(color: textPrimary),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: AuraDimensions.space2),
               Text(
-                'Pega un enlace de YouTube o comparte directamente desde la app para extraer video o audio.',
-                style: GoogleFonts.outfit(
-                  fontSize: 14,
-                  color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                  height: 1.4,
+                'Pega un enlace de YouTube o comparte directamente desde la app para descargar audio o video.',
+                style: AuraTypography.bodyMedium.copyWith(
+                  color: textSecondary,
+                  height: 1.45,
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: AuraDimensions.space6),
 
-              // ── URL Input — fluid, borderless pill ─────────────────────────
+              // ── URL Input (54dp height, 14dp radius) ──────────────────────
               AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
+                duration: const Duration(milliseconds: 180),
+                height: AuraDimensions.inputHeight,
                 decoration: BoxDecoration(
-                  color: isDark ? AppColors.darkSurfaceVariant : AppColors.lightSurfaceVariant,
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                  border: state.isLoadingMetadata
-                      ? Border.all(color: AppColors.primary.withValues(alpha: 0.5), width: 1.5)
-                      : Border.all(color: Colors.transparent),
+                  color: AuraColors.card(isDark),
+                  borderRadius: AuraDimensions.radiusMedium,
+                  border: Border.all(
+                    color: state.isLoadingMetadata ? primary : divider,
+                    width: state.isLoadingMetadata ? 1.5 : 1,
+                  ),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AuraDimensions.space4,
+                ),
                 child: Row(
                   children: [
                     Icon(
                       Icons.link_rounded,
-                      color: state.isLoadingMetadata ? AppColors.primary : AppColors.primary.withValues(alpha: 0.7),
+                      color: state.isLoadingMetadata ? primary : textSecondary,
                       size: 22,
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: AuraDimensions.space3),
                     Expanded(
                       child: TextField(
                         controller: _urlController,
-                        style: GoogleFonts.outfit(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontSize: 14,
+                        style: AuraTypography.bodyMedium.copyWith(
+                          color: textPrimary,
                         ),
                         decoration: InputDecoration(
                           hintText: 'https://youtube.com/watch?v=...',
-                          hintStyle: GoogleFonts.outfit(
-                            color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                            fontSize: 14,
+                          hintStyle: AuraTypography.bodyMedium.copyWith(
+                            color: textSecondary,
                           ),
+                          filled: false,
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           focusedBorder: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                          contentPadding: EdgeInsets.zero,
                           isDense: true,
                         ),
                         onSubmitted: (_) => _fetchMetadata(),
                         onChanged: (_) => setState(() {}),
                       ),
                     ),
-                    // Clear button
                     if (_urlController.text.isNotEmpty)
                       GestureDetector(
                         onTap: () {
                           _urlController.clear();
-                          context.read<DownloadBloc>().add(const ClearMetadataEvent());
+                          context
+                              .read<DownloadBloc>()
+                              .add(const ClearMetadataEvent());
                           setState(() {});
                         },
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
                           child: Icon(
                             Icons.close_rounded,
                             size: 18,
-                            color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
+                            color: textSecondary,
                           ),
                         ),
                       ),
-                    // Paste button
-                    const SizedBox(width: 4),
-                    _PasteButton(onTap: _pasteFromClipboard),
+                    const SizedBox(width: AuraDimensions.space1),
+                    _PastePill(onTap: _pasteFromClipboard),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: AuraDimensions.space3),
 
-              // ── Analyze button with interactive scale ──────────────────────
-              _ScaleBounceButton(
+              // ── Secondary analyze button (NOT lime, per rule 7A) ──────────
+              AuraButton(
+                label: state.isLoadingMetadata
+                    ? 'Analizando enlace...'
+                    : 'Analizar enlace',
+                icon: Icons.search_rounded,
+                variant: AuraButtonVariant.secondary,
+                isLoading: state.isLoadingMetadata,
                 onPressed: state.isLoadingMetadata ? null : _fetchMetadata,
-                child: OutlinedButton.icon(
-                  onPressed: state.isLoadingMetadata ? null : _fetchMetadata,
-                  icon: state.isLoadingMetadata
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
-                        )
-                      : const Icon(Icons.search_rounded, size: 18),
-                  label: Text(
-                    state.isLoadingMetadata ? 'Analizando enlace...' : 'Analizar enlace',
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    side: BorderSide(
-                      color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                    ),
-                  ),
-                ),
               ),
 
-              // ── Error display ──────────────────────────────────────────────
+              // ── Error banner ───────────────────────────────────────────────
               if (state.metadataError != null) ...[
-                const SizedBox(height: 14),
+                const SizedBox(height: AuraDimensions.space4),
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(AuraDimensions.space4),
                   decoration: BoxDecoration(
-                    color: AppColors.error.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.error.withValues(alpha: 0.25)),
+                    color: AuraColors.error(isDark).withValues(alpha: 0.1),
+                    borderRadius: AuraDimensions.radiusMedium,
+                    border: Border.all(
+                      color: AuraColors.error(isDark).withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.wifi_off_rounded, color: AppColors.error, size: 20),
-                      const SizedBox(width: 10),
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        color: AuraColors.error(isDark),
+                        size: AuraDimensions.smallIconSize,
+                      ),
+                      const SizedBox(width: AuraDimensions.space3),
                       Expanded(
                         child: Text(
                           state.metadataError!,
-                          style: GoogleFonts.outfit(
-                            color: AppColors.error,
-                            fontSize: 13,
+                          style: AuraTypography.bodySmall.copyWith(
+                            color: AuraColors.error(isDark),
                             height: 1.4,
                           ),
                         ),
@@ -267,109 +276,93 @@ class HomeTabState extends State<HomeTab> {
                 ),
               ],
 
-              // ── Metadata Preview card ──────────────────────────────────────
+              // ── Preview card ───────────────────────────────────────────────
               if (state.previewMetadata != null) ...[
-                const SizedBox(height: 18),
+                const SizedBox(height: AuraDimensions.space5),
                 MediaPreviewCard(
                   metadata: state.previewMetadata!,
                   onClear: () {
-                    context.read<DownloadBloc>().add(const ClearMetadataEvent());
+                    context
+                        .read<DownloadBloc>()
+                        .add(const ClearMetadataEvent());
                   },
                 ),
               ],
 
-              const SizedBox(height: 22),
+              const SizedBox(height: AuraDimensions.space5),
 
-              // ── Format & Quality Selector ──────────────────────────────────
-              FormatSelectorChip(
+              // ── Format & quality selector (Audio green / Video violet) ────
+              AuraFormatSelector(
                 selectedMediaType: _selectedMediaType,
                 selectedQuality: _selectedQuality,
                 audioSizeBytes: state.previewMetadata?.audioSizeBytes,
                 videoSizeBytes: state.previewMetadata?.videoSizeBytes,
-                availableQualities: state.previewMetadata?.availableQualities ??
-                    const [
-                      VideoQuality.best,
-                      VideoQuality.p1080,
-                      VideoQuality.p720,
-                      VideoQuality.p480,
-                      VideoQuality.p360,
-                    ],
-                onMediaTypeChanged: (type) => setState(() => _selectedMediaType = type),
+                audioExtensionLabel: _audioExtensionLabel,
+                availableQualities:
+                    state.previewMetadata?.availableQualities ??
+                        const [
+                          VideoQuality.best,
+                          VideoQuality.p1080,
+                          VideoQuality.p720,
+                          VideoQuality.p480,
+                          VideoQuality.p360,
+                        ],
+                onMediaTypeChanged: (type) =>
+                    setState(() => _selectedMediaType = type),
                 onQualityChanged: (q) => setState(() => _selectedQuality = q),
               ),
 
-              const SizedBox(height: 26),
+              const SizedBox(height: AuraDimensions.space6),
 
-              // ── "Añadir a la cola" — DISABLED until metadata is fetched ────
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 250),
-                opacity: hasMetadata ? 1.0 : 0.4,
-                child: _ScaleBounceButton(
-                  onPressed: hasMetadata ? () => _addToQueue(state) : null,
-                  child: ElevatedButton.icon(
-                    // onPressed: null disables the button truly
-                    onPressed: hasMetadata ? () => _addToQueue(state) : null,
-                    icon: const Icon(Icons.add_to_photos_rounded, size: 20),
-                    label: const Text('Añadir a la cola de descargas'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      textStyle: GoogleFonts.outfit(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      disabledBackgroundColor: AppColors.primary,
-                      disabledForegroundColor: Colors.white,
-                    ),
-                  ),
-                ),
+              // ── Primary Lime CTA ──────────────────────────────────────────
+              AuraButton(
+                label: 'Añadir a la cola de descargas',
+                icon: Icons.download_rounded,
+                variant: AuraButtonVariant.primary,
+                onPressed: hasMetadata ? () => _addToQueue(state) : null,
               ),
 
-              // ── Active downloads banner ────────────────────────────────────
+              // ── Active downloads summary banner ───────────────────────────
               if (state.downloadingCount > 0 || state.queuedCount > 0) ...[
-                const SizedBox(height: 20),
-                Material(
-                  color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(16),
-                  child: InkWell(
-                    onTap: widget.onNavigateToQueue,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+                const SizedBox(height: AuraDimensions.space5),
+                AuraCard(
+                  borderColor: primary.withValues(alpha: 0.35),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AuraDimensions.space4,
+                    vertical: 14,
+                  ),
+                  onTap: widget.onNavigateToQueue,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.downloading_rounded,
+                        color: primary,
+                        size: 22,
                       ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.downloading_rounded, color: AppColors.primary, size: 22),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '${state.downloadingCount} descargando · ${state.queuedCount} en espera',
-                              style: GoogleFonts.outfit(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                      const SizedBox(width: AuraDimensions.space3),
+                      Expanded(
+                        child: Text(
+                          '${state.downloadingCount} descargando · ${state.queuedCount} en espera',
+                          style: AuraTypography.metricSmall.copyWith(
+                            color: textPrimary,
+                            fontWeight: FontWeight.w600,
                           ),
-                          Text(
-                            'Ver cola',
-                            style: GoogleFonts.outfit(
-                              color: AppColors.primary,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.primary),
-                        ],
+                        ),
                       ),
-                    ),
+                      Text(
+                        'Ver cola',
+                        style: AuraTypography.label.copyWith(
+                          color: primary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 12,
+                        color: primary,
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -381,59 +374,31 @@ class HomeTabState extends State<HomeTab> {
   }
 }
 
-// ─── Interactive scale bounce wrapper ────────────────────────────────────────
-class _ScaleBounceButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onPressed;
-
-  const _ScaleBounceButton({required this.child, required this.onPressed});
-
-  @override
-  State<_ScaleBounceButton> createState() => _ScaleBounceButtonState();
-}
-
-class _ScaleBounceButtonState extends State<_ScaleBounceButton> {
-  bool _isDown = false;
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.onPressed == null) return widget.child;
-
-    return Listener(
-      onPointerDown: (_) => setState(() => _isDown = true),
-      onPointerUp: (_) => setState(() => _isDown = false),
-      onPointerCancel: (_) => setState(() => _isDown = false),
-      child: AnimatedScale(
-        scale: _isDown ? 0.97 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        curve: Curves.easeInOut,
-        child: widget.child,
-      ),
-    );
-  }
-}
-
-// ─── Paste button pill ───────────────────────────────────────────────────────
-class _PasteButton extends StatelessWidget {
+class _PastePill extends StatelessWidget {
   final VoidCallback onTap;
-  const _PasteButton({required this.onTap});
+  const _PastePill({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary = AuraColors.primary(isDark);
+
     return Material(
-      color: AppColors.primary.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(8),
+      color: primary.withValues(alpha: 0.14),
+      borderRadius: AuraDimensions.radiusSmall,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AuraDimensions.radiusSmall,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AuraDimensions.space3,
+            vertical: 6,
+          ),
           child: Text(
             'Pegar',
-            style: GoogleFonts.outfit(
-              color: AppColors.primary,
+            style: AuraTypography.label.copyWith(
+              color: primary,
               fontSize: 12,
-              fontWeight: FontWeight.w700,
             ),
           ),
         ),

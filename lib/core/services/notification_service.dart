@@ -158,6 +158,17 @@ class NotificationService {
     );
   }
 
+  Future<String?> getLaunchNotificationPayload() async {
+    try {
+      final details =
+          await _notificationsPlugin.getNotificationAppLaunchDetails();
+      if (details?.didNotificationLaunchApp == true) {
+        return details?.notificationResponse?.payload;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Cancel specific notification
   Future<void> cancelNotification(int id) async {
     if (!_initialized) return;
