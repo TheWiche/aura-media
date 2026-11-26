@@ -93,10 +93,15 @@ class _ShareModalScreenState extends State<ShareModalScreen>
   late MediaType _selectedMediaType;
   late VideoQuality _selectedQuality;
   late AudioFileFormat _audioFormat;
+  late VideoFormatPreference _videoFormatPref;
+  VideoStreamOption? _selectedVideoOption;
+  AudioStreamOption? _selectedAudioOption;
+
   String _audioFolderLabel = 'Download/AuraMedia/Audio';
   String _videoFolderLabel = 'Download/AuraMedia/Video';
 
   Completer<MediaMetadata?>? _metadataCompleter;
+  int _analysisGeneration = 0;
 
   @override
   void initState() {
@@ -107,6 +112,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     _selectedMediaType = SettingsService.instance.getDefaultMediaType();
     _selectedQuality = SettingsService.instance.getDefaultQuality();
     _audioFormat = SettingsService.instance.getAudioFormat();
+    _videoFormatPref = SettingsService.instance.getDefaultVideoFormat();
     final reduceAnimations = SettingsService.instance.getReduceAnimations();
 
     _animController = AnimationController(
@@ -194,6 +200,8 @@ class _ShareModalScreenState extends State<ShareModalScreen>
       _resolvedUrl = url;
       _error = null;
       _queuedSuccess = false;
+      _selectedVideoOption = null;
+      _selectedAudioOption = null;
     });
 
     if (behavior == ShareBehavior.autoDownload) {
@@ -234,6 +242,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
   Future<void> _fetchMetadata(String url) async {
     final completer = Completer<MediaMetadata?>();
     _metadataCompleter = completer;
+    final generation = ++_analysisGeneration;
 
     setState(() {
       _isLoadingMetadata = true;
@@ -242,22 +251,60 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     });
 
     try {
-      final meta = await _loadMetadataDirect(url);
+      MediaMetadata meta;
+      if (YoutubeExtractor.isYoutubeUrl(url)) {
+        meta = await _youtubeExtractor.fetchMetadataProgressive(
+          url,
+          onProgress: (partial) {
+            if (!mounted || generation != _analysisGeneration) return;
+            setState(() {
+              _metadata = partial;
+              _isLoadingMetadata = !partial.analysisStage.hasStreams;
+            });
+            if (partial.analysisStage.hasStreams && !completer.isCompleted) {
+              completer.complete(partial);
+            }
+          },
+        );
+      } else {
+        meta = await _genericExtractor.fetchMetadata(url);
+      }
+
       if (!completer.isCompleted) completer.complete(meta);
-      if (!mounted) return;
+      if (!mounted || generation != _analysisGeneration) return;
       setState(() {
         _isLoadingMetadata = false;
         _metadata = meta;
       });
     } catch (e) {
       if (!completer.isCompleted) completer.complete(null);
-      if (!mounted) return;
+      if (!mounted || generation != _analysisGeneration) return;
       final cleanMsg = e.toString().replaceFirst('Exception: ', '').trim();
       setState(() {
         _isLoadingMetadata = false;
+        _metadata = null;
         _error = cleanMsg;
       });
     }
+  }
+
+  VideoStreamOption? _activeVideoOption(MediaMetadata? meta) {
+    if (meta == null || meta.videoOptions.isEmpty) return null;
+    if (_selectedVideoOption != null &&
+        meta.videoOptions.any((o) => o.id == _selectedVideoOption!.id)) {
+      return _selectedVideoOption;
+    }
+    return meta.bestVideoOptionFor(_selectedQuality, _videoFormatPref);
+  }
+
+  AudioStreamOption? _activeAudioOption(MediaMetadata? meta) {
+    if (meta == null || meta.audioOptions.isEmpty) return null;
+    if (_selectedAudioOption != null &&
+        _selectedAudioOption!.format == _audioFormat &&
+        meta.audioOptions.any((o) => o.id == _selectedAudioOption!.id)) {
+      return _selectedAudioOption;
+    }
+    return meta.bestAudioOptionFor(_audioFormat);
   }
 
   Future<void> _handleDownloadPressed() async {
@@ -270,10 +317,13 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     });
 
     MediaMetadata? meta = _metadata;
-    if (meta == null && _isLoadingMetadata && _metadataCompleter != null) {
+    if ((meta == null || !meta.analysisStage.hasBasicInfo) &&
+        _isLoadingMetadata &&
+        _metadataCompleter != null) {
       try {
-        meta = await _metadataCompleter!.future
-            .timeout(const Duration(seconds: 6), onTimeout: () => null);
+        final completed = await _metadataCompleter!.future
+            .timeout(const Duration(seconds: 6), onTimeout: () => _metadata);
+        if (completed != null) meta = completed;
       } catch (_) {}
     }
 
@@ -293,14 +343,27 @@ class _ShareModalScreenState extends State<ShareModalScreen>
 
     final taskId = _uuid.v4();
     final notifId = taskId.hashCode.abs() % 100000;
-    final audioExt = _audioFormat.name;
-    final extension = _selectedMediaType == MediaType.audio ? audioExt : 'mp4';
+
+    final videoOpt = _activeVideoOption(metadata);
+    final audioOpt = _activeAudioOption(metadata);
+
+    final effectiveExt = _selectedMediaType == MediaType.audio
+        ? (audioOpt?.extension ?? _audioFormat.extensionName)
+        : (videoOpt?.container ?? 'mp4');
+
+    final effectiveQuality = _selectedMediaType == MediaType.video
+        ? (videoOpt?.quality ?? _selectedQuality)
+        : _selectedQuality;
+
+    final specSummary = _selectedMediaType == MediaType.audio
+        ? audioOpt?.specSummary
+        : videoOpt?.specSummary;
 
     final title = metadata?.title ??
         'Descarga_${DateTime.now().millisecondsSinceEpoch}';
     final initialTotalBytes = _selectedMediaType == MediaType.audio
-        ? (metadata?.audioSizeBytes ?? 0)
-        : (metadata?.videoSizeBytes ?? 0);
+        ? (audioOpt?.sizeBytes ?? metadata?.audioSizeBytes ?? 0)
+        : (videoOpt?.totalSizeBytes ?? metadata?.videoSizeBytes ?? 0);
 
     final task = DownloadTask(
       id: taskId,
@@ -310,8 +373,16 @@ class _ShareModalScreenState extends State<ShareModalScreen>
       author: metadata?.author,
       thumbnailUrl: metadata?.thumbnailUrl,
       mediaType: _selectedMediaType,
-      quality: _selectedQuality,
-      fileExtension: extension,
+      quality: effectiveQuality,
+      fileExtension: effectiveExt,
+      videoItag: _selectedMediaType == MediaType.video
+          ? videoOpt?.videoItag
+          : null,
+      audioItag: _selectedMediaType == MediaType.audio
+          ? audioOpt?.itag
+          : videoOpt?.audioItag,
+      audioLanguage: audioOpt?.trackLanguage,
+      specSummary: specSummary,
       totalBytes: initialTotalBytes,
       createdAt: DateTime.now(),
       status: DownloadStatus.queued,
@@ -378,6 +449,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
   Widget build(BuildContext context) {
     final tokens = AuraThemeTokens.of(context);
     final modalSurface = tokens.surface.withValues(alpha: 0.97);
+    final maxModalHeight = MediaQuery.sizeOf(context).height * 0.92;
 
     final qualities = _metadata?.availableQualities ??
         const [
@@ -390,14 +462,22 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     final effectiveQuality =
         qualities.contains(_selectedQuality) ? _selectedQuality : qualities.first;
 
-    final audioExtUpper = _audioFormat.name.toUpperCase();
+    final activeVideoOpt = _activeVideoOption(_metadata);
+    final activeAudioOpt = _activeAudioOption(_metadata);
+
+    final audioExtUpper =
+        activeAudioOpt?.extension.toUpperCase() ?? _audioFormat.shortLabel;
     final activeFolder = _selectedMediaType == MediaType.audio
         ? _audioFolderLabel
         : _videoFolderLabel;
 
     final buttonLabel = _selectedMediaType == MediaType.audio
-        ? 'Descargar Audio ($audioExtUpper)'
-        : 'Descargar Video (${_shortQualityLabel(effectiveQuality)})';
+        ? (activeAudioOpt != null
+            ? 'Descargar Audio ($audioExtUpper · ${activeAudioOpt.bitrateKbps}k)'
+            : 'Descargar Audio ($audioExtUpper)')
+        : (activeVideoOpt != null
+            ? 'Descargar Video (${activeVideoOpt.resolutionTag} ${activeVideoOpt.container.toUpperCase()})'
+            : 'Descargar Video (${effectiveQuality.shortLabel})');
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -413,174 +493,234 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                 opacity: _fadeAnimation,
                 child: SlideTransition(
                   position: _slideAnimation,
-                  child: Container(
-                    margin: const EdgeInsets.fromLTRB(10, 16, 10, 10),
-                    padding: const EdgeInsets.all(AuraDimensions.space5),
-                    decoration: BoxDecoration(
-                      color: modalSurface,
-                      borderRadius: AuraDimensions.radiusExtraLarge,
-                      border: Border.all(color: tokens.divider, width: 1),
-                    ),
-                    child: _isAutoDownloading
-                        ? _buildAutoDownloadingBanner(tokens)
-                        : Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Center(
-                                child: Container(
-                                  width: 36,
-                                  height: 4,
-                                  margin: const EdgeInsets.only(
-                                      bottom: AuraDimensions.space3),
-                                  decoration: BoxDecoration(
-                                    color: tokens.divider,
-                                    borderRadius: AuraDimensions.radiusFull,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxModalHeight),
+                    child: Container(
+                      margin: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                      decoration: BoxDecoration(
+                        color: modalSurface,
+                        borderRadius: AuraDimensions.radiusExtraLarge,
+                        border: Border.all(color: tokens.divider, width: 1),
+                      ),
+                      child: _isAutoDownloading
+                          ? _buildAutoDownloadingBanner(tokens)
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Center(
+                                  child: Container(
+                                    width: 36,
+                                    height: 4,
+                                    margin: const EdgeInsets.only(
+                                        bottom: AuraDimensions.space3),
+                                    decoration: BoxDecoration(
+                                      color: tokens.divider,
+                                      borderRadius: AuraDimensions.radiusFull,
+                                    ),
                                   ),
                                 ),
-                              ),
 
-                              Row(
-                                children: [
-                                  const AuraLogo(size: 26),
-                                  const SizedBox(width: AuraDimensions.space2),
-                                  Expanded(
-                                    child: Text(
-                                      'Aura',
-                                      style: AuraTypography.headingSmall
-                                          .copyWith(color: tokens.textPrimary),
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        _openInFullApp(_resolvedUrl),
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 6),
-                                      minimumSize: Size.zero,
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                    child: Text(
-                                      'Abrir app',
-                                      style: AuraTypography.label.copyWith(
-                                        fontSize: 12,
-                                        color: tokens.primary,
+                                Row(
+                                  children: [
+                                    const AuraLogo(size: 26),
+                                    const SizedBox(width: AuraDimensions.space2),
+                                    Expanded(
+                                      child: Text(
+                                        'Aura',
+                                        style: AuraTypography.headingSmall
+                                            .copyWith(color: tokens.textPrimary),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: AuraDimensions.space1),
-                                  IconButton(
-                                    onPressed: _closeModal,
-                                    icon: Icon(
-                                      Icons.close_rounded,
-                                      size: AuraDimensions.smallIconSize,
-                                      color: tokens.textSecondary,
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 32,
-                                      minHeight: 32,
-                                    ),
-                                  ),
-                                ],
-                              ),
-
-                              const SizedBox(height: AuraDimensions.space4),
-
-                              if (_metadata != null)
-                                _buildCompactPreview(_metadata!, tokens)
-                              else if (_isLoadingMetadata)
-                                _buildLoadingPreview(tokens)
-                              else if (_error != null)
-                                _buildErrorBanner(tokens),
-
-                              const SizedBox(height: AuraDimensions.space4),
-
-                              AuraFormatSelector(
-                                selectedMediaType: _selectedMediaType,
-                                selectedQuality: effectiveQuality,
-                                availableQualities: qualities,
-                                audioSizeBytes: _metadata?.audioSizeBytes,
-                                videoSizeBytes: _metadata?.videoSizeBytes,
-                                audioExtensionLabel: audioExtUpper,
-                                compact: true,
-                                onMediaTypeChanged: (type) =>
-                                    setState(() => _selectedMediaType = type),
-                                onQualityChanged: (q) =>
-                                    setState(() => _selectedQuality = q),
-                              ),
-
-                              const SizedBox(height: AuraDimensions.space4),
-
-                              if (_queuedSuccess)
-                                Container(
-                                  height: AuraDimensions.buttonHeight,
-                                  decoration: BoxDecoration(
-                                    color: tokens.audio.withValues(alpha: 0.16),
-                                    borderRadius: AuraDimensions.radiusMedium,
-                                    border: Border.all(
-                                      color:
-                                          tokens.audio.withValues(alpha: 0.45),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.check_circle_rounded,
-                                        color: tokens.audio,
-                                        size: 20,
+                                    TextButton(
+                                      onPressed: () =>
+                                          _openInFullApp(_resolvedUrl),
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 6),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
                                       ),
-                                      const SizedBox(
-                                          width: AuraDimensions.space2),
-                                      Text(
-                                        '¡Descarga iniciada en segundo plano!',
-                                        style: AuraTypography.button.copyWith(
-                                          color: tokens.audio,
-                                          fontSize: 14,
+                                      child: Text(
+                                        'Abrir app',
+                                        style: AuraTypography.label.copyWith(
+                                          fontSize: 12,
+                                          color: tokens.primary,
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                )
-                              else
-                                AuraButton(
-                                  label: _isSubmitting
-                                      ? 'Preparando descarga...'
-                                      : buttonLabel,
-                                  icon: Icons.download_rounded,
-                                  isLoading: _isSubmitting,
-                                  onPressed: _resolvedUrl == null
-                                      ? null
-                                      : _handleDownloadPressed,
-                                ),
-
-                              const SizedBox(height: AuraDimensions.space3),
-
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.info_outline_rounded,
-                                    size: 14,
-                                    color: tokens.textSecondary,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Flexible(
-                                    child: Text(
-                                      'Guardado local · $activeFolder',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: AuraTypography.bodySmall.copyWith(
+                                    ),
+                                    const SizedBox(width: AuraDimensions.space1),
+                                    IconButton(
+                                      onPressed: _closeModal,
+                                      icon: Icon(
+                                        Icons.close_rounded,
+                                        size: AuraDimensions.smallIconSize,
                                         color: tokens.textSecondary,
                                       ),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(
+                                        minWidth: 32,
+                                        minHeight: 32,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: AuraDimensions.space3),
+
+                                Flexible(
+                                  child: SingleChildScrollView(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (_metadata != null)
+                                          _buildCompactPreview(
+                                            _metadata!,
+                                            tokens,
+                                          )
+                                        else if (_isLoadingMetadata)
+                                          _buildLoadingPreview(tokens)
+                                        else if (_error != null)
+                                          _buildErrorBanner(tokens),
+
+                                        const SizedBox(
+                                            height: AuraDimensions.space4),
+
+                                        AuraFormatSelector(
+                                          selectedMediaType:
+                                              _selectedMediaType,
+                                          selectedQuality: effectiveQuality,
+                                          availableQualities: qualities,
+                                          audioSizeBytes:
+                                              _metadata?.audioSizeBytes,
+                                          videoSizeBytes:
+                                              _metadata?.videoSizeBytes,
+                                          audioExtensionLabel: audioExtUpper,
+                                          compact: true,
+                                          videoOptions:
+                                              _metadata?.videoOptions ??
+                                                  const [],
+                                          selectedVideoOption: activeVideoOpt,
+                                          onVideoOptionChanged: (opt) =>
+                                              setState(() {
+                                            _selectedVideoOption = opt;
+                                            _selectedQuality = opt.quality;
+                                          }),
+                                          audioOptions:
+                                              _metadata?.audioOptions ??
+                                                  const [],
+                                          selectedAudioOption: activeAudioOpt,
+                                          onAudioOptionChanged: (opt) =>
+                                              setState(() {
+                                            _selectedAudioOption = opt;
+                                            _audioFormat = opt.format;
+                                          }),
+                                          selectedAudioFormat: _audioFormat,
+                                          onAudioFormatChanged: (fmt) =>
+                                              setState(() {
+                                            _audioFormat = fmt;
+                                            _selectedAudioOption = _metadata
+                                                ?.bestAudioOptionFor(fmt);
+                                          }),
+                                          isResolvingFormats:
+                                              _metadata != null &&
+                                                  !_metadata!
+                                                      .analysisStage.hasStreams,
+                                          onMediaTypeChanged: (type) =>
+                                              setState(() =>
+                                                  _selectedMediaType = type),
+                                          onQualityChanged: (q) =>
+                                              setState(() {
+                                            _selectedQuality = q;
+                                            _selectedVideoOption = _metadata
+                                                ?.bestVideoOptionFor(
+                                              q,
+                                              _videoFormatPref,
+                                            );
+                                          }),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                ),
+
+                                const SizedBox(height: AuraDimensions.space4),
+
+                                if (_queuedSuccess)
+                                  Container(
+                                    height: AuraDimensions.buttonHeight,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          tokens.audio.withValues(alpha: 0.16),
+                                      borderRadius: AuraDimensions.radiusMedium,
+                                      border: Border.all(
+                                        color:
+                                            tokens.audio.withValues(alpha: 0.45),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.check_circle_rounded,
+                                          color: tokens.audio,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(
+                                            width: AuraDimensions.space2),
+                                        Text(
+                                          '¡Descarga iniciada en segundo plano!',
+                                          style: AuraTypography.button.copyWith(
+                                            color: tokens.audio,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  AuraButton(
+                                    label: _isSubmitting
+                                        ? 'Preparando descarga...'
+                                        : buttonLabel,
+                                    icon: Icons.download_rounded,
+                                    isLoading: _isSubmitting,
+                                    onPressed: _resolvedUrl == null
+                                        ? null
+                                        : _handleDownloadPressed,
+                                  ),
+
+                                const SizedBox(height: AuraDimensions.space3),
+
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline_rounded,
+                                      size: 14,
+                                      color: tokens.textSecondary,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        'Guardado local · $activeFolder',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: AuraTypography.bodySmall.copyWith(
+                                          color: tokens.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                    ),
                   ),
                 ),
               ),
@@ -622,8 +762,15 @@ class _ShareModalScreenState extends State<ShareModalScreen>
   }
 
   Widget _buildCompactPreview(MediaMetadata meta, AuraThemeTokens tokens) {
+    final stageHint = switch (meta.analysisStage) {
+      AnalysisStage.instant => 'Conectando...',
+      AnalysisStage.basicInfo => 'Cargando calidades...',
+      AnalysisStage.streamsReady || AnalysisStage.enriching => 'Refinando...',
+      AnalysisStage.complete => null,
+    };
+
     return Container(
-      padding: const EdgeInsets.all(AuraDimensions.space3),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: tokens.card,
         borderRadius: AuraDimensions.radiusLarge,
@@ -634,8 +781,8 @@ class _ShareModalScreenState extends State<ShareModalScreen>
           ClipRRect(
             borderRadius: AuraDimensions.radiusMedium,
             child: Container(
-              width: 88,
-              height: 88,
+              width: 72,
+              height: 72,
               color: tokens.primary.withValues(alpha: 0.12),
               child: meta.thumbnailUrl != null
                   ? Image.network(
@@ -679,23 +826,29 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                   ),
                 ),
                 const SizedBox(height: AuraDimensions.space2),
-                Row(
+                Wrap(
+                  spacing: AuraDimensions.space2,
+                  runSpacing: AuraDimensions.space1,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    if (meta.duration != null) ...[
-                      Icon(
-                        Icons.play_arrow_rounded,
-                        size: 14,
-                        color: tokens.textSecondary,
+                    if (meta.duration != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.play_arrow_rounded,
+                            size: 14,
+                            color: tokens.textSecondary,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            Formatters.formatDuration(meta.duration!),
+                            style: AuraTypography.metricSmall.copyWith(
+                              color: tokens.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 3),
-                      Text(
-                        Formatters.formatDuration(meta.duration!),
-                        style: AuraTypography.metricSmall.copyWith(
-                          color: tokens.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: AuraDimensions.space2),
-                    ],
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 7,
@@ -714,6 +867,29 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                         ),
                       ),
                     ),
+                    if (stageHint != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              color: tokens.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            stageHint,
+                            style: AuraTypography.bodySmall.copyWith(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: tokens.primary,
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ],
@@ -791,15 +967,4 @@ class _ShareModalScreenState extends State<ShareModalScreen>
       ),
     );
   }
-
-  String _shortQualityLabel(VideoQuality quality) {
-    return switch (quality) {
-      VideoQuality.best => 'Mejor',
-      VideoQuality.p1080 => '1080p',
-      VideoQuality.p720 => '720p',
-      VideoQuality.p480 => '480p',
-      VideoQuality.p360 => '360p',
-    };
-  }
 }
-

@@ -110,32 +110,67 @@ class NativeBridge(
     }
 
     private fun handleAudioCall(call: MethodCall, result: MethodChannel.Result) {
-        if (call.method == "extractAudio") {
-            val inputPath = call.argument<String>("inputPath")
-            val outputPath = call.argument<String>("outputPath")
-            if (inputPath == null || outputPath == null) {
-                result.error("INVALID_ARGS", "inputPath and outputPath are required", null)
-                return
-            }
+        when (call.method) {
+            "extractAudio" -> {
+                val inputPath = call.argument<String>("inputPath")
+                val outputPath = call.argument<String>("outputPath")
+                if (inputPath == null || outputPath == null) {
+                    result.error("INVALID_ARGS", "inputPath and outputPath are required", null)
+                    return
+                }
 
-            backgroundExecutor.execute {
-                try {
-                    val success = extractAudioTrack(inputPath, outputPath)
-                    mainHandler.post {
-                        if (success) {
-                            result.success(true)
-                        } else {
-                            result.error("FAILED", "Could not extract audio track", null)
+                backgroundExecutor.execute {
+                    try {
+                        val success = extractAudioTrack(inputPath, outputPath)
+                        mainHandler.post {
+                            if (success) {
+                                result.success(true)
+                            } else {
+                                result.error("FAILED", "Could not extract audio track", null)
+                            }
                         }
-                    }
-                } catch (e: Exception) {
-                    mainHandler.post {
-                        result.error("ERROR", e.message, null)
+                    } catch (e: Exception) {
+                        mainHandler.post {
+                            result.error("ERROR", e.message, null)
+                        }
                     }
                 }
             }
-        } else {
-            result.notImplemented()
+
+            "muxVideoAndAudio" -> {
+                val videoPath = call.argument<String>("videoPath")
+                val audioPath = call.argument<String>("audioPath")
+                val outputPath = call.argument<String>("outputPath")
+                val containerFormat = call.argument<String>("containerFormat") ?: "mp4"
+                if (videoPath == null || audioPath == null || outputPath == null) {
+                    result.error("INVALID_ARGS", "videoPath, audioPath and outputPath are required", null)
+                    return
+                }
+
+                backgroundExecutor.execute {
+                    try {
+                        val success = muxVideoAndAudioTracks(
+                            videoPath = videoPath,
+                            audioPath = audioPath,
+                            outputPath = outputPath,
+                            containerFormat = containerFormat
+                        )
+                        mainHandler.post {
+                            if (success) {
+                                result.success(true)
+                            } else {
+                                result.error("FAILED", "Could not mux video and audio tracks", null)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        mainHandler.post {
+                            result.error("ERROR", e.message, null)
+                        }
+                    }
+                }
+            }
+
+            else -> result.notImplemented()
         }
     }
 
@@ -216,6 +251,10 @@ class NativeBridge(
 
             "getAppVersion" -> {
                 result.success(readAppVersion())
+            }
+
+            "getAndroidSdkInt" -> {
+                result.success(Build.VERSION.SDK_INT)
             }
 
             "openFolder" -> {
@@ -396,9 +435,9 @@ class NativeBridge(
                 @Suppress("DEPRECATION")
                 pkgInfo.versionCode.toLong()
             }
-            "${pkgInfo.versionName ?: "1.4.0"}+$code"
+            "${pkgInfo.versionName ?: "1.5.0"}+$code"
         } catch (_: Exception) {
-            "1.4.0+11"
+            "1.5.0+12"
         }
     }
 
@@ -531,5 +570,166 @@ class NativeBridge(
         }
 
         return true
+    }
+
+    private fun muxVideoAndAudioTracks(
+        videoPath: String,
+        audioPath: String,
+        outputPath: String,
+        containerFormat: String,
+    ): Boolean {
+        val videoExtractor = MediaExtractor()
+        val audioExtractor = MediaExtractor()
+        var muxer: MediaMuxer? = null
+
+        try {
+            videoExtractor.setDataSource(videoPath)
+            audioExtractor.setDataSource(audioPath)
+
+            var videoTrackIndex = -1
+            var videoFormat: MediaFormat? = null
+            for (i in 0 until videoExtractor.trackCount) {
+                val fmt = videoExtractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/")) {
+                    videoTrackIndex = i
+                    videoFormat = fmt
+                    break
+                }
+            }
+
+            var audioTrackIndex = -1
+            var audioFormat: MediaFormat? = null
+            for (i in 0 until audioExtractor.trackCount) {
+                val fmt = audioExtractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    audioFormat = fmt
+                    break
+                }
+            }
+
+            if (videoTrackIndex == -1 || videoFormat == null ||
+                audioTrackIndex == -1 || audioFormat == null
+            ) {
+                return false
+            }
+
+            videoExtractor.selectTrack(videoTrackIndex)
+            audioExtractor.selectTrack(audioTrackIndex)
+
+            val outputFile = File(outputPath)
+            outputFile.parentFile?.let { parent ->
+                if (!parent.exists()) parent.mkdirs()
+            }
+            if (outputFile.exists()) {
+                outputFile.delete()
+            }
+
+            val outputFormat = if (containerFormat.equals("webm", ignoreCase = true)) {
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM
+            } else {
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+            }
+
+            val m = MediaMuxer(outputPath, outputFormat)
+            muxer = m
+            val muxerVideoTrack = m.addTrack(videoFormat)
+            val muxerAudioTrack = m.addTrack(audioFormat)
+            m.start()
+
+            val videoMax = try {
+                if (videoFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                    videoFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+                } else {
+                    1024 * 1024
+                }
+            } catch (_: Exception) {
+                1024 * 1024
+            }
+            val audioMax = try {
+                if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                    audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+                } else {
+                    128 * 1024
+                }
+            } catch (_: Exception) {
+                128 * 1024
+            }
+
+            var buffer = ByteBuffer.allocate(maxOf(videoMax, audioMax, 1024 * 1024))
+            val bufferInfo = MediaCodec.BufferInfo()
+
+            var videoDone = false
+            var audioDone = false
+
+            fun readSampleSafe(extractor: MediaExtractor): Int {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val needed = extractor.sampleSize
+                    if (needed > buffer.capacity() && needed <= 16 * 1024 * 1024) {
+                        buffer = ByteBuffer.allocate(needed.toInt())
+                    }
+                }
+                return try {
+                    extractor.readSampleData(buffer, 0)
+                } catch (_: IllegalArgumentException) {
+                    val nextCap = minOf(buffer.capacity() * 2, 16 * 1024 * 1024)
+                    if (nextCap <= buffer.capacity()) throw IllegalStateException("Frame exceeds 16MB buffer")
+                    buffer = ByteBuffer.allocate(nextCap)
+                    extractor.readSampleData(buffer, 0)
+                }
+            }
+
+            while (!videoDone || !audioDone) {
+                val vTime = if (videoDone) Long.MAX_VALUE else maxOf(0L, videoExtractor.sampleTime)
+                val aTime = if (audioDone) Long.MAX_VALUE else maxOf(0L, audioExtractor.sampleTime)
+
+                if (!videoDone && (audioDone || vTime <= aTime)) {
+                    val sampleSize = readSampleSafe(videoExtractor)
+                    if (sampleSize < 0) {
+                        videoDone = true
+                    } else {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = maxOf(0L, videoExtractor.sampleTime)
+                        bufferInfo.flags = videoExtractor.sampleFlags
+                        m.writeSampleData(muxerVideoTrack, buffer, bufferInfo)
+                        videoExtractor.advance()
+                    }
+                } else if (!audioDone) {
+                    val sampleSize = readSampleSafe(audioExtractor)
+                    if (sampleSize < 0) {
+                        audioDone = true
+                    } else {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = maxOf(0L, audioExtractor.sampleTime)
+                        bufferInfo.flags = audioExtractor.sampleFlags
+                        m.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
+                        audioExtractor.advance()
+                    }
+                }
+            }
+
+            return true
+        } finally {
+            try {
+                muxer?.stop()
+            } catch (_: Exception) {
+            }
+            try {
+                muxer?.release()
+            } catch (_: Exception) {
+            }
+            try {
+                videoExtractor.release()
+            } catch (_: Exception) {
+            }
+            try {
+                audioExtractor.release()
+            } catch (_: Exception) {
+            }
+        }
     }
 }

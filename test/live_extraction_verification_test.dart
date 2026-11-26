@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
 import 'package:medias_download/features/downloader/data/datasources/youtube_extractor.dart';
 import 'package:medias_download/features/downloader/data/models/download_task.dart';
+import 'package:medias_download/features/downloader/data/models/media_metadata.dart';
 import 'package:medias_download/features/downloader/domain/queue/download_queue_manager.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide VideoQuality;
 
@@ -91,6 +92,34 @@ void main() {
       print('[TEST-YT] YouTube rate-limiting detectado para la IP actual (esperado en IPs de red compartida/datacenter). Manejado correctamente.');
     } catch (e) {
       print('[TEST-YT] Capturado error de red: $e');
+    } finally {
+      youtubeExtractor.close();
+    }
+  });
+
+  test('YouTube progressive extraction emits rapid stages and rich options',
+      () async {
+    final youtubeExtractor = YoutubeExtractor();
+    const testUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    final stages = <AnalysisStage>[];
+
+    try {
+      final finalMeta = await youtubeExtractor.fetchMetadataProgressive(
+        testUrl,
+        onProgress: (m) => stages.add(m.analysisStage),
+      );
+      print('[TEST-YT-PROG] Stages=$stages | VideoOpts=${finalMeta.videoOptions.length} | AudioOpts=${finalMeta.audioOptions.length}');
+      expect(stages.first, AnalysisStage.instant);
+      expect(stages.contains(AnalysisStage.streamsReady), isTrue);
+      expect(finalMeta.analysisStage, AnalysisStage.complete);
+      expect(finalMeta.videoOptions, isNotEmpty);
+      expect(finalMeta.audioOptions, isNotEmpty);
+      expect(
+        finalMeta.videoOptions.any((v) => v.height >= 1080),
+        isTrue,
+      );
+    } on RequestLimitExceededException {
+      print('[TEST-YT-PROG] YouTube rate limit on CI IP handled safely.');
     } finally {
       youtubeExtractor.close();
     }

@@ -228,6 +228,19 @@ class CompletedTaskCard extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (task.specSummary != null &&
+                        task.specSummary!.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        task.specSummary!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AuraTypography.bodySmall.copyWith(
+                          color: tokens.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

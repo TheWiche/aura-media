@@ -26,16 +26,39 @@ class EnqueueDownloadEvent extends DownloadEvent {
   final MediaType mediaType;
   final VideoQuality quality;
   final MediaMetadata? metadata;
+  final String? fileExtension;
+  final int? videoItag;
+  final int? audioItag;
+  final String? audioLanguage;
+  final String? specSummary;
+  final int? estimatedTotalBytes;
 
   const EnqueueDownloadEvent({
     required this.url,
     required this.mediaType,
     this.quality = VideoQuality.best,
     this.metadata,
+    this.fileExtension,
+    this.videoItag,
+    this.audioItag,
+    this.audioLanguage,
+    this.specSummary,
+    this.estimatedTotalBytes,
   });
 
   @override
-  List<Object?> get props => [url, mediaType, quality, metadata];
+  List<Object?> get props => [
+        url,
+        mediaType,
+        quality,
+        metadata,
+        fileExtension,
+        videoItag,
+        audioItag,
+        audioLanguage,
+        specSummary,
+        estimatedTotalBytes,
+      ];
 }
 
 class PauseDownloadEvent extends DownloadEvent {

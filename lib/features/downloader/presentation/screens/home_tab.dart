@@ -10,6 +10,7 @@ import '../../../../shared/widgets/aura_card.dart';
 import '../../../../shared/widgets/aura_format_selector.dart';
 import '../../data/datasources/youtube_extractor.dart';
 import '../../data/models/download_task.dart';
+import '../../data/models/media_metadata.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_event.dart';
 import '../bloc/download_state.dart';
@@ -33,7 +34,12 @@ class HomeTabState extends State<HomeTab> {
   final TextEditingController _urlController = TextEditingController();
   late MediaType _selectedMediaType;
   late VideoQuality _selectedQuality;
-  late String _audioExtensionLabel;
+  late AudioFileFormat _selectedAudioFormat;
+  late VideoFormatPreference _selectedVideoFormatPref;
+
+  VideoStreamOption? _selectedVideoOption;
+  AudioStreamOption? _selectedAudioOption;
+  String? _lastUrlForOptions;
 
   @override
   void initState() {
@@ -49,10 +55,11 @@ class HomeTabState extends State<HomeTab> {
   }
 
   void _syncFromSettings() {
-    _selectedMediaType = SettingsService.instance.getDefaultMediaType();
-    _selectedQuality = SettingsService.instance.getDefaultQuality();
-    _audioExtensionLabel =
-        SettingsService.instance.getAudioFormat().name.toUpperCase();
+    final s = SettingsService.instance;
+    _selectedMediaType = s.getDefaultMediaType();
+    _selectedQuality = s.getDefaultQuality();
+    _selectedAudioFormat = s.getAudioFormat();
+    _selectedVideoFormatPref = s.getDefaultVideoFormat();
   }
 
   void _onSettingsChanged() {
@@ -74,7 +81,11 @@ class HomeTabState extends State<HomeTab> {
     final clean = YoutubeExtractor.cleanUrl(url);
     _urlController.text = clean;
     if (mounted) {
-      setState(() {});
+      setState(() {
+        _selectedVideoOption = null;
+        _selectedAudioOption = null;
+        _lastUrlForOptions = clean;
+      });
       _fetchMetadata();
     }
   }
@@ -90,24 +101,80 @@ class HomeTabState extends State<HomeTab> {
   void _fetchMetadata() {
     final text = _urlController.text.trim();
     if (text.isNotEmpty) {
+      setState(() {
+        _selectedVideoOption = null;
+        _selectedAudioOption = null;
+        _lastUrlForOptions = text;
+      });
       context.read<DownloadBloc>().add(FetchMetadataEvent(text));
     }
   }
 
+  VideoStreamOption? _activeVideoOption(MediaMetadata? meta) {
+    if (meta == null || meta.videoOptions.isEmpty) return null;
+    if (_selectedVideoOption != null &&
+        meta.videoOptions.any((o) => o.id == _selectedVideoOption!.id)) {
+      return _selectedVideoOption;
+    }
+    return meta.bestVideoOptionFor(_selectedQuality, _selectedVideoFormatPref);
+  }
+
+  AudioStreamOption? _activeAudioOption(MediaMetadata? meta) {
+    if (meta == null || meta.audioOptions.isEmpty) return null;
+    if (_selectedAudioOption != null &&
+        _selectedAudioOption!.format == _selectedAudioFormat &&
+        meta.audioOptions.any((o) => o.id == _selectedAudioOption!.id)) {
+      return _selectedAudioOption;
+    }
+    return meta.bestAudioOptionFor(_selectedAudioFormat);
+  }
+
   void _addToQueue(DownloadState state) {
     final url = _urlController.text.trim();
-    if (url.isEmpty || state.previewMetadata == null) return;
+    final meta = state.previewMetadata;
+    if (url.isEmpty || meta == null) return;
+
+    final videoOpt = _activeVideoOption(meta);
+    final audioOpt = _activeAudioOption(meta);
+
+    final effectiveExt = _selectedMediaType == MediaType.audio
+        ? (audioOpt?.extension ?? _selectedAudioFormat.extensionName)
+        : (videoOpt?.container ?? 'mp4');
+
+    final effectiveQuality = _selectedMediaType == MediaType.video
+        ? (videoOpt?.quality ?? _selectedQuality)
+        : _selectedQuality;
+
+    final specSummary = _selectedMediaType == MediaType.audio
+        ? audioOpt?.specSummary
+        : videoOpt?.specSummary;
+
+    final estimatedBytes = _selectedMediaType == MediaType.audio
+        ? (audioOpt?.sizeBytes ?? meta.audioSizeBytes)
+        : (videoOpt?.totalSizeBytes ?? meta.videoSizeBytes);
 
     context.read<DownloadBloc>().add(
           EnqueueDownloadEvent(
             url: url,
             mediaType: _selectedMediaType,
-            quality: _selectedQuality,
-            metadata: state.previewMetadata,
+            quality: effectiveQuality,
+            metadata: meta,
+            fileExtension: effectiveExt,
+            videoItag: _selectedMediaType == MediaType.video
+                ? videoOpt?.videoItag
+                : null,
+            audioItag: _selectedMediaType == MediaType.audio
+                ? audioOpt?.itag
+                : videoOpt?.audioItag,
+            audioLanguage: audioOpt?.trackLanguage,
+            specSummary: specSummary,
+            estimatedTotalBytes: estimatedBytes,
           ),
         );
 
     _urlController.clear();
+    _selectedVideoOption = null;
+    _selectedAudioOption = null;
     context.read<DownloadBloc>().add(const ClearMetadataEvent());
 
     final tokens = AuraThemeTokens.of(context);
@@ -131,7 +198,30 @@ class HomeTabState extends State<HomeTab> {
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
-        final hasMetadata = state.previewMetadata != null;
+        final meta = state.previewMetadata;
+        final hasMetadata = meta != null;
+        if (meta != null && meta.url != _lastUrlForOptions) {
+          _lastUrlForOptions = meta.url;
+          _selectedVideoOption = null;
+          _selectedAudioOption = null;
+        }
+
+        final activeVideoOpt = _activeVideoOption(meta);
+        final activeAudioOpt = _activeAudioOption(meta);
+
+        final actionLabel = () {
+          if (!hasMetadata) return 'Añadir a la cola de descargas';
+          if (_selectedMediaType == MediaType.audio) {
+            if (activeAudioOpt != null) {
+              return 'Añadir · ${activeAudioOpt.extension.toUpperCase()} ${activeAudioOpt.bitrateKbps} kbps';
+            }
+            return 'Añadir Audio (${_selectedAudioFormat.shortLabel})';
+          }
+          if (activeVideoOpt != null) {
+            return 'Añadir · ${activeVideoOpt.resolutionTag} ${activeVideoOpt.container.toUpperCase()} (${activeVideoOpt.videoCodec})';
+          }
+          return 'Añadir a la cola de descargas';
+        }();
 
         return SingleChildScrollView(
           padding: const EdgeInsets.symmetric(
@@ -206,6 +296,8 @@ class HomeTabState extends State<HomeTab> {
                       GestureDetector(
                         onTap: () {
                           _urlController.clear();
+                          _selectedVideoOption = null;
+                          _selectedAudioOption = null;
                           context
                               .read<DownloadBloc>()
                               .add(const ClearMetadataEvent());
@@ -271,11 +363,13 @@ class HomeTabState extends State<HomeTab> {
                 ),
               ],
 
-              if (state.previewMetadata != null) ...[
+              if (meta != null) ...[
                 const SizedBox(height: AuraDimensions.space5),
                 MediaPreviewCard(
-                  metadata: state.previewMetadata!,
+                  metadata: meta,
                   onClear: () {
+                    _selectedVideoOption = null;
+                    _selectedAudioOption = null;
                     context
                         .read<DownloadBloc>()
                         .add(const ClearMetadataEvent());
@@ -288,27 +382,51 @@ class HomeTabState extends State<HomeTab> {
               AuraFormatSelector(
                 selectedMediaType: _selectedMediaType,
                 selectedQuality: _selectedQuality,
-                audioSizeBytes: state.previewMetadata?.audioSizeBytes,
-                videoSizeBytes: state.previewMetadata?.videoSizeBytes,
-                audioExtensionLabel: _audioExtensionLabel,
-                availableQualities:
-                    state.previewMetadata?.availableQualities ??
-                        const [
-                          VideoQuality.best,
-                          VideoQuality.p1080,
-                          VideoQuality.p720,
-                          VideoQuality.p480,
-                          VideoQuality.p360,
-                        ],
+                audioSizeBytes: meta?.audioSizeBytes,
+                videoSizeBytes: meta?.videoSizeBytes,
+                audioExtensionLabel: _selectedAudioFormat.shortLabel,
+                availableQualities: meta?.availableQualities ??
+                    const [
+                      VideoQuality.best,
+                      VideoQuality.p1080,
+                      VideoQuality.p720,
+                      VideoQuality.p480,
+                      VideoQuality.p360,
+                    ],
+                videoOptions: meta?.videoOptions ?? const [],
+                selectedVideoOption: activeVideoOpt,
+                onVideoOptionChanged: (opt) => setState(() {
+                  _selectedVideoOption = opt;
+                  _selectedQuality = opt.quality;
+                }),
+                audioOptions: meta?.audioOptions ?? const [],
+                selectedAudioOption: activeAudioOpt,
+                onAudioOptionChanged: (opt) => setState(() {
+                  _selectedAudioOption = opt;
+                  _selectedAudioFormat = opt.format;
+                }),
+                selectedAudioFormat: _selectedAudioFormat,
+                onAudioFormatChanged: (fmt) => setState(() {
+                  _selectedAudioFormat = fmt;
+                  _selectedAudioOption = meta?.bestAudioOptionFor(fmt);
+                }),
+                isResolvingFormats:
+                    meta != null && !meta.analysisStage.hasStreams,
                 onMediaTypeChanged: (type) =>
                     setState(() => _selectedMediaType = type),
-                onQualityChanged: (q) => setState(() => _selectedQuality = q),
+                onQualityChanged: (q) => setState(() {
+                  _selectedQuality = q;
+                  _selectedVideoOption = meta?.bestVideoOptionFor(
+                    q,
+                    _selectedVideoFormatPref,
+                  );
+                }),
               ),
 
               const SizedBox(height: AuraDimensions.space6),
 
               AuraButton(
-                label: 'Añadir a la cola de descargas',
+                label: actionLabel,
                 icon: Icons.download_rounded,
                 variant: AuraButtonVariant.primary,
                 onPressed: hasMetadata ? () => _addToQueue(state) : null,

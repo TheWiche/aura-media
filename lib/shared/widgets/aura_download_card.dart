@@ -39,9 +39,8 @@ class AuraDownloadCard extends StatelessWidget {
     };
 
     final extUpper = task.fileExtension.toUpperCase();
-    final formatSubtitle = isAudio
-        ? '$extUpper · Audio'
-        : '$extUpper · ${_qualityShort(task.quality)}';
+    final formatSubtitle = task.specSummary ??
+        (isAudio ? '$extUpper · Audio' : '$extUpper · ${task.quality.shortLabel}');
 
     final speedText = Formatters.formatSpeed(task.speedBytesPerSec);
     final remainingBytes =
@@ -356,16 +355,6 @@ class AuraDownloadCard extends StatelessWidget {
     }
 
     return const SizedBox.shrink();
-  }
-
-  static String _qualityShort(VideoQuality q) {
-    return switch (q) {
-      VideoQuality.best => 'Mejor',
-      VideoQuality.p1080 => '1080p',
-      VideoQuality.p720 => '720p',
-      VideoQuality.p480 => '480p',
-      VideoQuality.p360 => '360p',
-    };
   }
 }
 

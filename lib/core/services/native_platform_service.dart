@@ -147,14 +147,33 @@ class NativePlatformService {
     }
   }
 
+  static int? _cachedAndroidSdkInt;
+
+  /// Returns Android `Build.VERSION.SDK_INT` (cached once per isolate; 34 on non-Android).
+  Future<int> getAndroidSdkInt() async {
+    if (_cachedAndroidSdkInt != null) return _cachedAndroidSdkInt!;
+    if (!Platform.isAndroid) {
+      _cachedAndroidSdkInt = 34;
+      return 34;
+    }
+    try {
+      final sdk = await _channel.invokeMethod<int>('getAndroidSdkInt');
+      _cachedAndroidSdkInt = sdk ?? 29;
+      return _cachedAndroidSdkInt!;
+    } catch (_) {
+      _cachedAndroidSdkInt = 29;
+      return 29;
+    }
+  }
+
   /// Reads versionName+versionCode from Android PackageInfo.
   Future<String> getAppVersion() async {
-    if (!Platform.isAndroid) return '1.4.0+11';
+    if (!Platform.isAndroid) return '1.5.0+12';
     try {
       final version = await _channel.invokeMethod<String>('getAppVersion');
-      return (version != null && version.isNotEmpty) ? version : '1.4.0+11';
+      return (version != null && version.isNotEmpty) ? version : '1.5.0+12';
     } catch (_) {
-      return '1.4.0+11';
+      return '1.5.0+12';
     }
   }
 

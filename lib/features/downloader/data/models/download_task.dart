@@ -16,10 +16,14 @@ enum MediaType {
 
 enum VideoQuality {
   best,
+  p2160,
+  p1440,
   p1080,
   p720,
   p480,
   p360,
+  p240,
+  p144,
 }
 
 extension VideoQualityExtension on VideoQuality {
@@ -27,6 +31,10 @@ extension VideoQualityExtension on VideoQuality {
     switch (this) {
       case VideoQuality.best:
         return 'Mejor disponible';
+      case VideoQuality.p2160:
+        return '4K · 2160p';
+      case VideoQuality.p1440:
+        return '2K · 1440p';
       case VideoQuality.p1080:
         return '1080p Full HD';
       case VideoQuality.p720:
@@ -35,6 +43,33 @@ extension VideoQualityExtension on VideoQuality {
         return '480p SD';
       case VideoQuality.p360:
         return '360p';
+      case VideoQuality.p240:
+        return '240p';
+      case VideoQuality.p144:
+        return '144p';
+    }
+  }
+
+  String get shortLabel {
+    switch (this) {
+      case VideoQuality.best:
+        return 'Mejor';
+      case VideoQuality.p2160:
+        return '4K';
+      case VideoQuality.p1440:
+        return '2K';
+      case VideoQuality.p1080:
+        return '1080p';
+      case VideoQuality.p720:
+        return '720p';
+      case VideoQuality.p480:
+        return '480p';
+      case VideoQuality.p360:
+        return '360p';
+      case VideoQuality.p240:
+        return '240p';
+      case VideoQuality.p144:
+        return '144p';
     }
   }
 
@@ -42,6 +77,10 @@ extension VideoQualityExtension on VideoQuality {
     switch (this) {
       case VideoQuality.best:
         return null;
+      case VideoQuality.p2160:
+        return 2160;
+      case VideoQuality.p1440:
+        return 1440;
       case VideoQuality.p1080:
         return 1080;
       case VideoQuality.p720:
@@ -50,7 +89,22 @@ extension VideoQualityExtension on VideoQuality {
         return 480;
       case VideoQuality.p360:
         return 360;
+      case VideoQuality.p240:
+        return 240;
+      case VideoQuality.p144:
+        return 144;
     }
+  }
+
+  static VideoQuality fromHeight(int height) {
+    if (height >= 2000) return VideoQuality.p2160;
+    if (height >= 1350) return VideoQuality.p1440;
+    if (height >= 1000) return VideoQuality.p1080;
+    if (height >= 680) return VideoQuality.p720;
+    if (height >= 440) return VideoQuality.p480;
+    if (height >= 330) return VideoQuality.p360;
+    if (height >= 210) return VideoQuality.p240;
+    return VideoQuality.p144;
   }
 }
 
@@ -64,6 +118,10 @@ class DownloadTask extends Equatable {
   final MediaType mediaType;
   final VideoQuality quality;
   final String fileExtension;
+  final int? videoItag;
+  final int? audioItag;
+  final String? audioLanguage;
+  final String? specSummary;
   final String? savedPath;
   final int totalBytes;
   final int downloadedBytes;
@@ -83,6 +141,10 @@ class DownloadTask extends Equatable {
     required this.mediaType,
     this.quality = VideoQuality.best,
     required this.fileExtension,
+    this.videoItag,
+    this.audioItag,
+    this.audioLanguage,
+    this.specSummary,
     this.savedPath,
     this.totalBytes = 0,
     this.downloadedBytes = 0,
@@ -123,6 +185,10 @@ class DownloadTask extends Equatable {
       'mediaType': mediaType.name,
       'quality': quality.name,
       'fileExtension': fileExtension,
+      'videoItag': videoItag,
+      'audioItag': audioItag,
+      'audioLanguage': audioLanguage,
+      'specSummary': specSummary,
       'savedPath': savedPath,
       'totalBytes': totalBytes,
       'downloadedBytes': downloadedBytes,
@@ -151,6 +217,10 @@ class DownloadTask extends Equatable {
         orElse: () => VideoQuality.best,
       ),
       fileExtension: json['fileExtension'] as String? ?? 'mp3',
+      videoItag: (json['videoItag'] as num?)?.toInt(),
+      audioItag: (json['audioItag'] as num?)?.toInt(),
+      audioLanguage: json['audioLanguage'] as String?,
+      specSummary: json['specSummary'] as String?,
       savedPath: json['savedPath'] as String?,
       totalBytes: (json['totalBytes'] as num?)?.toInt() ?? 0,
       downloadedBytes: (json['downloadedBytes'] as num?)?.toInt() ?? 0,
@@ -178,6 +248,10 @@ class DownloadTask extends Equatable {
     MediaType? mediaType,
     VideoQuality? quality,
     String? fileExtension,
+    int? videoItag,
+    int? audioItag,
+    String? audioLanguage,
+    String? specSummary,
     String? savedPath,
     int? totalBytes,
     int? downloadedBytes,
@@ -198,6 +272,10 @@ class DownloadTask extends Equatable {
       mediaType: mediaType ?? this.mediaType,
       quality: quality ?? this.quality,
       fileExtension: fileExtension ?? this.fileExtension,
+      videoItag: videoItag ?? this.videoItag,
+      audioItag: audioItag ?? this.audioItag,
+      audioLanguage: audioLanguage ?? this.audioLanguage,
+      specSummary: specSummary ?? this.specSummary,
       savedPath: savedPath ?? this.savedPath,
       totalBytes: totalBytes ?? this.totalBytes,
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
@@ -221,6 +299,10 @@ class DownloadTask extends Equatable {
         mediaType,
         quality,
         fileExtension,
+        videoItag,
+        audioItag,
+        audioLanguage,
+        specSummary,
         savedPath,
         totalBytes,
         downloadedBytes,

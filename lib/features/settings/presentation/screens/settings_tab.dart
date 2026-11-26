@@ -38,6 +38,7 @@ class _SettingsTabState extends State<SettingsTab> {
   late bool _reduceAnimations;
 
   late VideoQuality _defaultQuality;
+  late VideoFormatPreference _defaultVideoFormat;
   late MediaType _defaultMediaType;
   late ShareBehavior _shareBehavior;
   late bool _autoCloseShareModal;
@@ -59,7 +60,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   bool _storagePermissionGranted = false;
   bool _batteryOptimizationIgnored = false;
-  String _appVersion = '1.4.0+11';
+  String _appVersion = '1.5.0+12';
 
   @override
   void initState() {
@@ -91,6 +92,7 @@ class _SettingsTabState extends State<SettingsTab> {
     _videoPlayerName = s.getVideoPlayerName();
 
     _defaultQuality = s.getDefaultQuality();
+    _defaultVideoFormat = s.getDefaultVideoFormat();
     _defaultMediaType = s.getDefaultMediaType();
     _shareBehavior = s.getShareBehavior();
     _autoCloseShareModal = s.getAutoCloseShareModal();
@@ -624,7 +626,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 _FolderTile(
                   icon: Icons.music_note_rounded,
                   iconColor: tokens.audio,
-                  title: 'Carpeta de Audio (${_audioFormat.name.toUpperCase()})',
+                  title: 'Carpeta de Audio (${_audioFormat.shortLabel})',
                   path: _audioDownloadPath,
                   hasCustomPath: _hasCustomAudioPath,
                   onPick: () => _pickFolderFor(MediaType.audio),
@@ -638,7 +640,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 _FolderTile(
                   icon: Icons.videocam_rounded,
                   iconColor: tokens.video,
-                  title: 'Carpeta de Video (MP4)',
+                  title: 'Carpeta de Video (MP4 / WEBM)',
                   path: _videoDownloadPath,
                   hasCustomPath: _hasCustomVideoPath,
                   onPick: () => _pickFolderFor(MediaType.video),
@@ -664,11 +666,15 @@ class _SettingsTabState extends State<SettingsTab> {
                   icon: Icons.high_quality_rounded,
                   iconColor: tokens.video,
                   title: 'Calidad de video',
-                  subtitle: 'Resolución predeterminada para MP4',
+                  subtitle: 'Resolución predeterminada al descargar',
                   value: _defaultQuality,
                   items: const [
                     DropdownMenuItem(
                         value: VideoQuality.best, child: Text('Mejor')),
+                    DropdownMenuItem(
+                        value: VideoQuality.p2160, child: Text('4K · 2160p')),
+                    DropdownMenuItem(
+                        value: VideoQuality.p1440, child: Text('2K · 1440p')),
                     DropdownMenuItem(
                         value: VideoQuality.p1080, child: Text('1080p')),
                     DropdownMenuItem(
@@ -677,6 +683,10 @@ class _SettingsTabState extends State<SettingsTab> {
                         value: VideoQuality.p480, child: Text('480p')),
                     DropdownMenuItem(
                         value: VideoQuality.p360, child: Text('360p')),
+                    DropdownMenuItem(
+                        value: VideoQuality.p240, child: Text('240p')),
+                    DropdownMenuItem(
+                        value: VideoQuality.p144, child: Text('144p')),
                   ],
                   onChanged: (val) async {
                     if (val == null) return;
@@ -684,17 +694,39 @@ class _SettingsTabState extends State<SettingsTab> {
                   },
                 ),
                 Divider(height: 1, indent: 16, endIndent: 16, color: tokens.divider),
+                _DropdownRow<VideoFormatPreference>(
+                  icon: Icons.video_settings_rounded,
+                  iconColor: tokens.video,
+                  title: 'Formato de video',
+                  subtitle: 'Códec/contenedor preferido (MP4 o WEBM VP9)',
+                  value: _defaultVideoFormat,
+                  items: const [
+                    DropdownMenuItem(
+                        value: VideoFormatPreference.auto, child: Text('Auto')),
+                    DropdownMenuItem(
+                        value: VideoFormatPreference.mp4, child: Text('MP4')),
+                    DropdownMenuItem(
+                        value: VideoFormatPreference.webm, child: Text('WEBM')),
+                  ],
+                  onChanged: (val) async {
+                    if (val == null) return;
+                    await SettingsService.instance.setDefaultVideoFormat(val);
+                  },
+                ),
+                Divider(height: 1, indent: 16, endIndent: 16, color: tokens.divider),
                 _DropdownRow<AudioFileFormat>(
                   icon: Icons.library_music_rounded,
                   iconColor: tokens.audio,
-                  title: 'Extensión de audio',
-                  subtitle: 'MP3 compatible o M4A AAC nativo',
+                  title: 'Formato de audio',
+                  subtitle: 'MP3 compatible, M4A AAC u OPUS WebM',
                   value: _audioFormat,
                   items: const [
                     DropdownMenuItem(
                         value: AudioFileFormat.mp3, child: Text('MP3')),
                     DropdownMenuItem(
-                        value: AudioFileFormat.m4a, child: Text('M4A')),
+                        value: AudioFileFormat.m4a, child: Text('M4A (AAC)')),
+                    DropdownMenuItem(
+                        value: AudioFileFormat.webm, child: Text('OPUS (WebM)')),
                   ],
                   onChanged: (val) async {
                     if (val == null) return;

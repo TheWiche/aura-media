@@ -19,6 +19,12 @@ class MediaPreviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = AuraThemeTokens.of(context);
+    final stageLabel = switch (metadata.analysisStage) {
+      AnalysisStage.instant => 'Conectando...',
+      AnalysisStage.basicInfo => 'Calculando formatos...',
+      AnalysisStage.streamsReady || AnalysisStage.enriching => 'Refinando...',
+      AnalysisStage.complete => null,
+    };
 
     return AuraCard(
       padding: const EdgeInsets.all(AuraDimensions.space4),
@@ -71,7 +77,10 @@ class MediaPreviewCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: AuraDimensions.space2),
-                Row(
+                Wrap(
+                  spacing: AuraDimensions.space2,
+                  runSpacing: AuraDimensions.space1,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -91,15 +100,44 @@ class MediaPreviewCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (metadata.duration != null) ...[
-                      const SizedBox(width: AuraDimensions.space2),
+                    if (metadata.duration != null)
                       Text(
                         Formatters.formatDuration(metadata.duration!),
                         style: AuraTypography.metricSmall.copyWith(
                           color: tokens.textSecondary,
                         ),
                       ),
-                    ],
+                    if (stageLabel != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.6,
+                              color: tokens.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            stageLabel,
+                            style: AuraTypography.bodySmall.copyWith(
+                              color: tokens.primary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (metadata.videoOptions.isNotEmpty)
+                      Text(
+                        '${metadata.videoOptions.length} formatos · ${metadata.audioOptions.length} audios',
+                        style: AuraTypography.bodySmall.copyWith(
+                          color: tokens.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
                   ],
                 ),
               ],

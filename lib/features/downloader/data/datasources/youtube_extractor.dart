@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide VideoQuality;
+import '../../../../core/services/native_platform_service.dart';
+import '../../../../core/services/settings_service.dart';
 import '../models/download_task.dart';
 import '../models/media_metadata.dart';
 
@@ -63,19 +66,32 @@ class MobileYoutubeHttpClient extends YoutubeHttpClient {
 class ResolvedStream {
   final StreamInfo streamInfo;
   final Stream<List<int>> stream;
+  final StreamInfo? secondaryAudioInfo;
+  final Stream<List<int>>? secondaryAudioStream;
   final int totalBytes;
   final int containerTotalBytes;
+  final int secondaryAudioBytes;
   final String extension;
   final bool requiresAudioExtraction;
+  final bool requiresVideoAudioMux;
 
   ResolvedStream({
     required this.streamInfo,
     required this.stream,
+    this.secondaryAudioInfo,
+    this.secondaryAudioStream,
     required this.totalBytes,
     int? containerTotalBytes,
+    this.secondaryAudioBytes = 0,
     required this.extension,
     this.requiresAudioExtraction = false,
+    this.requiresVideoAudioMux = false,
   }) : containerTotalBytes = containerTotalBytes ?? totalBytes;
+
+  bool get isDualAdaptive =>
+      requiresVideoAudioMux &&
+      secondaryAudioInfo != null &&
+      secondaryAudioStream != null;
 }
 
 class YoutubeExtractor {
@@ -86,7 +102,6 @@ class YoutubeExtractor {
       : _httpClient = httpClient ?? MobileHttpClient(),
         _yt = yt ?? YoutubeExplode(httpClient: MobileYoutubeHttpClient());
 
-  // ─── Video ID extraction via Regex ─────────────────────────────────────────
   /// Extracts the 11-character YouTube video ID from any recognized URL format,
   /// including youtu.be short links, /shorts/, /embed/, and ?si= tracking params.
   static String? extractVideoId(String rawUrl) {
@@ -119,91 +134,169 @@ class YoutubeExtractor {
         host.contains('music.youtube.com');
   }
 
-  /// Extract metadata and video details locally from YouTube.
-  /// Uses official YouTube oEmbed + Innertube stream manifest (requireWatchPage: false)
-  /// to bypass web watch page bot walls and 429 rate limiting.
-  Future<MediaMetadata> fetchMetadata(String url) async {
+  /// Awaits complete metadata and stream options (compatible with existing callers/tests).
+  Future<MediaMetadata> fetchMetadata(String url) {
+    return fetchMetadataProgressive(url, onProgress: (_) {});
+  }
+
+  /// Progressive multi-stage extraction:
+  /// - Stage 0 (`instant`, 0 ms): Video ID, canonical URL & immediate HQ thumbnail.
+  /// - Stage 1A (`basicInfo`, ~250-400 ms): oEmbed title, author, thumbnail.
+  /// - Stage 1B (`streamsReady`, ~300-600 ms in parallel): Innertube `androidVr`
+  ///   manifest with full resolutions (up to 4K60), codecs & audio bitrates.
+  /// - Stage 2 (`enriching` -> `complete`): duration + complementary fallback merge.
+  Future<MediaMetadata> fetchMetadataProgressive(
+    String url, {
+    required void Function(MediaMetadata partial) onProgress,
+  }) async {
     try {
       final videoIdStr = extractVideoId(url) ?? url.trim();
       final videoId = VideoId(videoIdStr);
+      final canonicalUrl = cleanUrl(url);
+      final defaultThumb =
+          'https://i.ytimg.com/vi/${videoId.value}/hqdefault.jpg';
 
-      String title = 'YouTube Video';
-      String author = 'YouTube';
-      String thumbnail = 'https://i.ytimg.com/vi/${videoId.value}/hqdefault.jpg';
-      Duration? duration;
-
-      // 1. Fetch metadata via official public oEmbed (never bot-blocked, instant)
-      try {
-        final oembedUri = Uri.parse(
-          'https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId.value}&format=json',
-        );
-        final oembedRes = await _httpClient.get(oembedUri).timeout(
-          const Duration(seconds: 8),
-        );
-        if (oembedRes.statusCode == 200) {
-          final data = jsonDecode(oembedRes.body) as Map<String, dynamic>;
-          title = data['title'] as String? ?? title;
-          author = data['author_name'] as String? ?? author;
-          if (data['thumbnail_url'] != null) {
-            thumbnail = data['thumbnail_url'] as String;
-          }
-        }
-      } catch (_) {
-        // Fallback: Continue to manifest retrieval
-      }
-
-      // 2. Extract StreamManifest using Innertube Android endpoint (requireWatchPage: false)
-      final manifest = await _yt.videos.streamsClient.getManifest(
-        videoId,
-        requireWatchPage: false,
-      );
-
-      final availableQualities = <VideoQuality>{VideoQuality.best};
-
-      for (final stream in manifest.muxed) {
-        final height = stream.videoResolution.height;
-        if (height >= 1080) {
-          availableQualities.add(VideoQuality.p1080);
-        } else if (height >= 720) {
-          availableQualities.add(VideoQuality.p720);
-        } else if (height >= 480) {
-          availableQualities.add(VideoQuality.p480);
-        } else if (height >= 360) {
-          availableQualities.add(VideoQuality.p360);
-        }
-      }
-
-      // Optional: attempt to get duration from video details if possible without blocking
-      try {
-        final video = await _yt.videos.get(videoId).timeout(const Duration(seconds: 4));
-        duration = video.duration;
-        if (video.title.isNotEmpty) title = video.title;
-        if (video.author.isNotEmpty) author = video.author;
-      } catch (_) {
-        // Duration remains null or fallback if watch page was blocked; title and qualities are intact!
-      }
-
-      int? audioSizeBytes;
-      int? videoSizeBytes;
-
-      if (manifest.audioOnly.isNotEmpty) {
-        audioSizeBytes = manifest.audioOnly.withHighestBitrate().size.totalBytes;
-      }
-      if (manifest.muxed.isNotEmpty) {
-        videoSizeBytes = manifest.muxed.sortByVideoQuality().first.size.totalBytes;
-      }
-
-      return MediaMetadata(
-        url: cleanUrl(url),
-        title: title,
-        author: author,
-        thumbnailUrl: thumbnail,
-        duration: duration,
+      var snapshot = MediaMetadata(
+        url: canonicalUrl,
+        title: 'Cargando video de YouTube...',
+        author: 'YouTube',
+        thumbnailUrl: defaultThumb,
         platform: 'YouTube',
-        availableQualities: availableQualities.toList(),
-        audioSizeBytes: audioSizeBytes,
-        videoSizeBytes: videoSizeBytes,
+        availableQualities: const [VideoQuality.best],
+        analysisStage: AnalysisStage.instant,
       );
+      onProgress(snapshot);
+
+      final sdkInt = await NativePlatformService.instance.getAndroidSdkInt();
+      final allowAv1InMp4 = sdkInt >= 29;
+
+      // Launch Stage 1A (oEmbed), Stage 1B (androidVr manifest) & Stage 2 (watch duration) in parallel!
+      final oembedFuture = _fetchOembed(videoId.value).then((data) {
+        if (data == null) return false;
+        final title = (data['title'] as String?)?.trim();
+        final author = (data['author_name'] as String?)?.trim();
+        final thumb = (data['thumbnail_url'] as String?)?.trim();
+
+        final nextStage = snapshot.analysisStage.hasStreams
+            ? snapshot.analysisStage
+            : AnalysisStage.basicInfo;
+
+        snapshot = snapshot.copyWith(
+          title: (title != null && title.isNotEmpty) ? title : snapshot.title,
+          author:
+              (author != null && author.isNotEmpty) ? author : snapshot.author,
+          thumbnailUrl: (thumb != null && thumb.isNotEmpty)
+              ? thumb
+              : snapshot.thumbnailUrl,
+          analysisStage: nextStage,
+        );
+        onProgress(snapshot);
+        return true;
+      }).catchError((_) => false);
+
+      final watchDetailsFuture = _yt.videos
+          .get(videoId)
+          .timeout(const Duration(seconds: 5))
+          .then<Video?>((video) {
+        final nextStage = snapshot.analysisStage;
+        snapshot = snapshot.copyWith(
+          title: video.title.isNotEmpty &&
+                  snapshot.title == 'Cargando video de YouTube...'
+              ? video.title
+              : (video.title.isNotEmpty && !snapshot.analysisStage.hasBasicInfo
+                  ? video.title
+                  : snapshot.title),
+          author: video.author.isNotEmpty ? video.author : snapshot.author,
+          duration: video.duration ?? snapshot.duration,
+          analysisStage: nextStage,
+        );
+        onProgress(snapshot);
+        return video;
+      }).catchError((_) => null);
+
+      final manifestResult = await _getFastManifest(videoId);
+      final manifest = manifestResult.manifest;
+
+      var parsed = _buildOptionsFromManifest(
+        manifest,
+        allowAv1InMp4: allowAv1InMp4,
+      );
+
+      // Give oEmbed a brief moment only if snapshot still has placeholder title
+      if (snapshot.title == 'Cargando video de YouTube...') {
+        await oembedFuture.timeout(
+          const Duration(milliseconds: 250),
+          onTimeout: () => false,
+        );
+      }
+
+      final resolvedTitle = snapshot.title == 'Cargando video de YouTube...'
+          ? 'Video de YouTube (${videoId.value})'
+          : snapshot.title;
+
+      snapshot = snapshot.copyWith(
+        title: resolvedTitle,
+        availableQualities: parsed.availableQualities,
+        videoOptions: parsed.videoOptions,
+        audioOptions: parsed.audioOptions,
+        audioSizeBytes: parsed.defaultAudioSizeBytes,
+        videoSizeBytes: parsed.defaultVideoSizeBytes,
+        analysisStage: AnalysisStage.streamsReady,
+      );
+      onProgress(snapshot);
+
+      // Background Stage 2: finish awaiting watch details (duration) + complement streams only if needed
+      final needsFallbackMerge = parsed.videoOptions.every((v) => v.height <= 360) ||
+          parsed.audioOptions.length <= 1;
+
+      if (needsFallbackMerge &&
+          manifestResult.client != YoutubeApiClient.androidSdkless) {
+        snapshot = snapshot.copyWith(analysisStage: AnalysisStage.enriching);
+        onProgress(snapshot);
+
+        try {
+          final secondary = await _yt.videos.streamsClient
+              .getManifest(
+                videoId,
+                ytClients: const [YoutubeApiClient.androidSdkless],
+                requireWatchPage: false,
+              )
+              .timeout(const Duration(seconds: 6));
+          final mergedStreams = <StreamInfo>[
+            ...manifest.streams,
+            ...secondary.streams,
+          ];
+          parsed = _buildOptionsFromManifest(
+            StreamManifest(mergedStreams),
+            allowAv1InMp4: allowAv1InMp4,
+          );
+          snapshot = snapshot.copyWith(
+            availableQualities: parsed.availableQualities,
+            videoOptions: parsed.videoOptions,
+            audioOptions: parsed.audioOptions,
+            audioSizeBytes: parsed.defaultAudioSizeBytes,
+            videoSizeBytes: parsed.defaultVideoSizeBytes,
+          );
+          onProgress(snapshot);
+        } catch (_) {}
+      }
+
+      // Let watch details finish if still pending (short bound)
+      await Future.wait([
+        oembedFuture,
+        watchDetailsFuture,
+      ]);
+
+      final finalTitle = snapshot.title == 'Cargando video de YouTube...'
+          ? 'Video de YouTube (${videoId.value})'
+          : snapshot.title;
+
+      snapshot = snapshot.copyWith(
+        title: finalTitle,
+        analysisStage: AnalysisStage.complete,
+      );
+      onProgress(snapshot);
+      return snapshot;
     } on SocketException {
       throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
     } on VideoUnavailableException {
@@ -222,62 +315,68 @@ class YoutubeExtractor {
         'Espera unos minutos e inténtalo de nuevo.',
       );
     } catch (e) {
-      final str = e.toString().toLowerCase();
-      if (str.contains('failed host lookup') ||
-          str.contains('socket') ||
-          str.contains('network') ||
-          str.contains('errno = 7') ||
-          str.contains('connection refused') ||
-          str.contains('handshake failed') ||
-          str.contains('timed out')) {
-        throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
-      }
-      if (str.contains('unplayable') ||
-          str.contains('age') ||
-          str.contains('restricted') ||
-          str.contains('login_required') ||
-          str.contains('sign in') ||
-          str.contains('transientfailure') ||
-          str.contains('bot')) {
-        throw Exception(
-          'El video tiene restricciones de edad o está bloqueado por YouTube',
-        );
-      }
-      throw Exception('No se pudo obtener la información del enlace: $e');
+      throw _mapFriendlyException(e);
     }
   }
 
-  /// Resolve the stream and return a stream reader with total bytes.
-  /// Uses requireWatchPage: false for 100% reliable local extraction.
+  /// Resolves either a single stream (muxed video, WebM Opus, M4A/MP3 audio)
+  /// or a dual adaptive pair (high-res videoOnly + compatible audioOnly) to mux natively.
   Future<ResolvedStream> resolveStream({
     required String url,
     required MediaType mediaType,
     VideoQuality quality = VideoQuality.best,
     String audioExtension = 'mp3',
+    VideoFormatPreference preferredVideoFormat = VideoFormatPreference.auto,
+    int? videoItag,
+    int? audioItag,
+    String? audioLanguage,
+    bool forceMuxedFallback = false,
   }) async {
     try {
       final videoIdStr = extractVideoId(url) ?? url.trim();
       final videoId = VideoId(videoIdStr);
-
-      final manifest = await _yt.videos.streamsClient.getManifest(
-        videoId,
-        requireWatchPage: false,
-      );
+      final manifestResult = await _getFastManifest(videoId);
+      final manifest = manifestResult.manifest;
+      final sdkInt = await NativePlatformService.instance.getAndroidSdkInt();
 
       if (mediaType == MediaType.audio) {
-        // YouTube adaptive audio-only streams (itag 140, 251) do NOT have ratebypass=yes
-        // and are blocked with HTTP 403 Forbidden after 1 MB.
-        // YouTube Muxed stream (itag 18: 360p MP4) ALWAYS has ratebypass=yes signed by YouTube
-        // and contains an unthrottled, pristine 128kbps AAC stereo audio track.
-        // We select itag 18, download it cleanly without any 403 errors, and extract the
-        // audio track natively on device with Android's MediaExtractor.
+        if (!forceMuxedFallback && manifest.audioOnly.isNotEmpty) {
+          final selectedAudio = _pickAudioStream(
+            manifest,
+            audioExtension: audioExtension,
+            requestedItag: audioItag,
+            audioLanguage: audioLanguage,
+          );
+
+          if (selectedAudio != null) {
+            final isWebm = audioExtension.toLowerCase() == 'webm' ||
+                selectedAudio.container.name.toLowerCase() == 'webm';
+
+            final effectiveExt = isWebm
+                ? 'webm'
+                : (audioExtension.toLowerCase() == 'm4a' ? 'm4a' : 'mp3');
+
+            return ResolvedStream(
+              streamInfo: selectedAudio,
+              stream: _yt.videos.streamsClient.get(selectedAudio),
+              totalBytes: selectedAudio.size.totalBytes,
+              containerTotalBytes: selectedAudio.size.totalBytes,
+              extension: effectiveExt,
+              // DASH mp4 audio streams use `moof` fragments; remuxing via MediaExtractor/MediaMuxer
+              // turns them into clean single-`moov` seekable `.m4a` or `.mp3` files.
+              requiresAudioExtraction: !isWebm,
+              requiresVideoAudioMux: false,
+            );
+          }
+        }
+
+        // Legacy/resilience fallback: download muxed itag 18 and strip video track natively
         final muxedStreams = manifest.muxed.sortByVideoQuality();
         if (muxedStreams.isNotEmpty) {
           final selectedStream = muxedStreams.firstWhere(
             (s) => s.tag == 18,
             orElse: () => muxedStreams.last,
           );
-          final stream = _yt.videos.streamsClient.get(selectedStream);
           final audioStreams = manifest.audioOnly;
           final estimatedAudioBytes = audioStreams.isNotEmpty
               ? audioStreams.withHighestBitrate().size.totalBytes
@@ -285,74 +384,94 @@ class YoutubeExtractor {
 
           return ResolvedStream(
             streamInfo: selectedStream,
-            stream: stream,
+            stream: _yt.videos.streamsClient.get(selectedStream),
             totalBytes: estimatedAudioBytes,
             containerTotalBytes: selectedStream.size.totalBytes,
-            extension: audioExtension,
+            extension: audioExtension == 'webm' ? 'm4a' : audioExtension,
             requiresAudioExtraction: true,
+            requiresVideoAudioMux: false,
           );
         }
 
-        // Fallback to audio-only if no muxed stream is available
-        final audioStreams = manifest.audioOnly;
-        if (audioStreams.isEmpty) {
-          throw Exception('No se encontraron pistas de audio disponibles');
-        }
+        throw Exception('No se encontraron pistas de audio disponibles');
+      }
 
-        final mp4AudioStreams = audioStreams
-            .where((s) => s.container.name.toLowerCase() == 'mp4')
-            .toList();
-        final bestAudio = mp4AudioStreams.isNotEmpty
-            ? mp4AudioStreams.withHighestBitrate()
-            : audioStreams.withHighestBitrate();
-
-        final stream = _yt.videos.streamsClient.get(bestAudio);
-
-        return ResolvedStream(
-          streamInfo: bestAudio,
-          stream: stream,
-          totalBytes: bestAudio.size.totalBytes,
-          extension: audioExtension,
-          requiresAudioExtraction: false,
-        );
-      } else {
-        // MuxedStreamInfo para video (incluye video y audio en un solo contenedor)
-        final muxedStreams = manifest.muxed.sortByVideoQuality();
-        if (muxedStreams.isEmpty) {
-          // Fallback a video-only si no hay muxed
-          final videoStreams = manifest.videoOnly.sortByVideoQuality();
-          if (videoStreams.isEmpty) {
-            throw Exception('No se encontraron pistas de video disponibles');
-          }
-          final streamInfo = videoStreams.first;
+      // ─── VIDEO RESOLUTION ────────────────────────────────────────────────
+      // 1. Exact video itag requested by user from progressive options UI
+      if (videoItag != null) {
+        final muxedMatch =
+            manifest.muxed.where((s) => s.tag == videoItag).toList();
+        if (muxedMatch.isNotEmpty) {
+          final m = muxedMatch.first;
           return ResolvedStream(
-            streamInfo: streamInfo,
-            stream: _yt.videos.streamsClient.get(streamInfo),
-            totalBytes: streamInfo.size.totalBytes,
-            extension: streamInfo.container.name.toLowerCase(),
+            streamInfo: m,
+            stream: _yt.videos.streamsClient.get(m),
+            totalBytes: m.size.totalBytes,
+            containerTotalBytes: m.size.totalBytes,
+            extension: 'mp4',
           );
         }
 
-        MuxedStreamInfo selectedStream;
+        final videoOnlyMatch =
+            manifest.videoOnly.where((s) => s.tag == videoItag).toList();
+        if (videoOnlyMatch.isNotEmpty) {
+          final v = videoOnlyMatch.first;
+          return _buildAdaptiveVideoPlan(
+            manifest,
+            v,
+            requestedAudioItag: audioItag,
+            audioLanguage: audioLanguage,
+          );
+        }
+      }
+
+      // 2. Match by quality + container preference
+      if (!forceMuxedFallback && manifest.videoOnly.isNotEmpty) {
+        final bestVideoOnly = _pickVideoOnlyStream(
+          manifest,
+          quality: quality,
+          preference: preferredVideoFormat,
+          allowAv1InMp4: sdkInt >= 29,
+        );
+
+        if (bestVideoOnly != null) {
+          // Prefer muxed 360p directly ONLY if user explicitly asked for 360p MP4
+          final is360Mp4 = quality == VideoQuality.p360 &&
+              preferredVideoFormat != VideoFormatPreference.webm &&
+              manifest.muxed.any((m) => m.videoResolution.height == 360);
+          if (!is360Mp4) {
+            return _buildAdaptiveVideoPlan(
+              manifest,
+              bestVideoOnly,
+              requestedAudioItag: audioItag,
+              audioLanguage: audioLanguage,
+            );
+          }
+        }
+      }
+
+      // 3. Fallback to muxed (360p direct)
+      final muxedStreams = manifest.muxed.sortByVideoQuality();
+      if (muxedStreams.isNotEmpty) {
         final targetHeight = quality.heightPixels;
+        final selectedStream =
+            (targetHeight == null || quality == VideoQuality.best)
+                ? muxedStreams.first
+                : muxedStreams.firstWhere(
+                    (s) => s.videoResolution.height <= targetHeight,
+                    orElse: () => muxedStreams.last,
+                  );
 
-        if (targetHeight == null || quality == VideoQuality.best) {
-          selectedStream = muxedStreams.first; // Mayor calidad muxed disponible
-        } else {
-          selectedStream = muxedStreams.firstWhere(
-            (s) => s.videoResolution.height <= targetHeight,
-            orElse: () => muxedStreams.last,
-          );
-        }
-
-        final stream = _yt.videos.streamsClient.get(selectedStream);
         return ResolvedStream(
           streamInfo: selectedStream,
-          stream: stream,
+          stream: _yt.videos.streamsClient.get(selectedStream),
           totalBytes: selectedStream.size.totalBytes,
+          containerTotalBytes: selectedStream.size.totalBytes,
           extension: selectedStream.container.name.toLowerCase(),
         );
       }
+
+      throw Exception('No se encontraron pistas de video disponibles');
     } on SocketException {
       throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
     } on VideoUnplayableException {
@@ -369,27 +488,530 @@ class YoutubeExtractor {
         'Espera unos minutos e inténtalo de nuevo.',
       );
     } catch (e) {
-      final str = e.toString().toLowerCase();
-      if (str.contains('failed host lookup') ||
-          str.contains('socket') ||
-          str.contains('network') ||
-          str.contains('errno = 7')) {
-        throw Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
+      final mapped = _mapFriendlyException(e);
+      if (mapped == e) rethrow;
+      throw mapped;
+    }
+  }
+
+  ResolvedStream _buildAdaptiveVideoPlan(
+    StreamManifest manifest,
+    VideoOnlyStreamInfo video, {
+    int? requestedAudioItag,
+    String? audioLanguage,
+  }) {
+    final container = video.container.name.toLowerCase(); // 'mp4' or 'webm'
+    final isWebm = container == 'webm';
+
+    AudioOnlyStreamInfo? audio;
+    if (requestedAudioItag != null) {
+      final exact =
+          manifest.audioOnly.where((s) => s.tag == requestedAudioItag).toList();
+      if (exact.isNotEmpty) {
+        final candidate = exact.first;
+        final candidateWebm = candidate.container.name.toLowerCase() == 'webm';
+        if (candidateWebm == isWebm) {
+          audio = candidate;
+        }
       }
-      if (str.contains('unplayable') ||
-          str.contains('age') ||
-          str.contains('restricted') ||
-          str.contains('transientfailure')) {
-        throw Exception(
-          'El video tiene restricciones de edad o está bloqueado por YouTube',
+    }
+
+    audio ??= _pickAudioStream(
+      manifest,
+      audioExtension: isWebm ? 'webm' : 'm4a',
+      audioLanguage: audioLanguage,
+    );
+
+    if (audio == null) {
+      // Last-resort fallback to any audioOnly or muxed
+      if (manifest.audioOnly.isNotEmpty) {
+        audio = manifest.audioOnly.withHighestBitrate();
+      }
+    }
+
+    if (audio != null) {
+      final vBytes = video.size.totalBytes;
+      final aBytes = audio.size.totalBytes;
+      return ResolvedStream(
+        streamInfo: video,
+        stream: _yt.videos.streamsClient.get(video),
+        secondaryAudioInfo: audio,
+        secondaryAudioStream: _yt.videos.streamsClient.get(audio),
+        totalBytes: vBytes + aBytes,
+        containerTotalBytes: vBytes,
+        secondaryAudioBytes: aBytes,
+        extension: isWebm ? 'webm' : 'mp4',
+        requiresAudioExtraction: false,
+        requiresVideoAudioMux: true,
+      );
+    }
+
+    return ResolvedStream(
+      streamInfo: video,
+      stream: _yt.videos.streamsClient.get(video),
+      totalBytes: video.size.totalBytes,
+      containerTotalBytes: video.size.totalBytes,
+      extension: isWebm ? 'webm' : 'mp4',
+      requiresVideoAudioMux: false,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchOembed(String videoId) async {
+    try {
+      final uri = Uri.parse(
+        'https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$videoId&format=json',
+      );
+      final res =
+          await _httpClient.get(uri).timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<_ManifestFetchResult> _getFastManifest(VideoId videoId) async {
+    // Try fastest, 403-free Innertube client first (`androidVr` ~300 ms)
+    for (final client in const [
+      YoutubeApiClient.androidVr,
+      YoutubeApiClient.androidSdkless,
+      YoutubeApiClient.tv,
+    ]) {
+      try {
+        final manifest = await _yt.videos.streamsClient
+            .getManifest(
+              videoId,
+              ytClients: [client],
+              requireWatchPage: false,
+            )
+            .timeout(const Duration(seconds: 10));
+        if (manifest.streams.isNotEmpty) {
+          return _ManifestFetchResult(manifest: manifest, client: client);
+        }
+      } catch (e) {
+        if (client == YoutubeApiClient.tv) rethrow;
+      }
+    }
+    throw VideoUnavailableException('No streams available for $videoId');
+  }
+
+  static _ParsedManifestOptions _buildOptionsFromManifest(
+    StreamManifest manifest, {
+    required bool allowAv1InMp4,
+  }) {
+    final allAudio = manifest.audioOnly.toList()
+      ..sort(
+        (a, b) => b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond),
+      );
+
+    // Filter reliable audio tracks (exclude problematic surround EC-3/AC-3/258 for primary playback compatibility)
+    final aacStreams = allAudio.where((s) {
+      final c = s.container.name.toLowerCase();
+      final codec = s.audioCodec.toLowerCase();
+      return c == 'mp4' &&
+          (codec.contains('mp4a') || codec.contains('aac')) &&
+          s.tag != 258 &&
+          s.tag != 328 &&
+          s.tag != 380;
+    }).toList();
+
+    final opusStreams = allAudio.where((s) {
+      final c = s.container.name.toLowerCase();
+      final codec = s.audioCodec.toLowerCase();
+      return c == 'webm' && codec.contains('opus');
+    }).toList();
+
+    final defaultAac = aacStreams.isNotEmpty
+        ? aacStreams.firstWhere(
+            (s) => s.tag == 140,
+            orElse: () => aacStreams.first,
+          )
+        : null;
+    final defaultOpus = opusStreams.isNotEmpty
+        ? opusStreams.firstWhere(
+            (s) => s.tag == 251,
+            orElse: () => opusStreams.first,
+          )
+        : null;
+
+    // ─── Build Detailed Audio Options ────────────────────────────────────────
+    final audioOptions = <AudioStreamOption>[];
+    final seenAudioKeys = <String>{};
+
+    void addAudioOption(
+      AudioOnlyStreamInfo s,
+      AudioFileFormat format,
+      String ext,
+    ) {
+      final kbps = s.bitrate.kiloBitsPerSecond.round();
+      final lang = s.audioTrack?.displayName;
+      final isDefault = s.audioTrack?.audioIsDefault ?? true;
+      final key = '${format.name}_${s.tag}_${lang ?? ''}';
+      if (!seenAudioKeys.add(key)) return;
+
+      final tier = _audioTierLabel(kbps, format);
+      final codecLabel = switch (format) {
+        AudioFileFormat.mp3 => 'AAC → MP3 compat.',
+        AudioFileFormat.m4a =>
+          s.audioCodec.contains('.5') ? 'HE-AAC' : 'AAC-LC',
+        AudioFileFormat.webm => 'Opus WebM',
+      };
+      final note = switch (format) {
+        AudioFileFormat.mp3 =>
+          kbps <= 65 ? 'Ligero · compatible universal' : 'Compatible universal',
+        AudioFileFormat.m4a => kbps >= 180
+            ? 'AAC multicanal alta tasa'
+            : (kbps <= 65 ? 'Ahorro de datos' : 'Nativo iOS/Android'),
+        AudioFileFormat.webm =>
+          kbps >= 110 ? 'Máx. fidelidad por MB' : 'Ligero en Opus',
+      };
+
+      audioOptions.add(
+        AudioStreamOption(
+          id: key,
+          format: format,
+          extension: ext,
+          codecLabel: codecLabel,
+          bitrateKbps: kbps,
+          qualityTier: tier,
+          sizeBytes: s.size.totalBytes,
+          itag: s.tag,
+          trackLanguage: lang,
+          isDefaultTrack: isDefault,
+          note: note,
+        ),
+      );
+    }
+
+    for (final s in aacStreams) {
+      addAudioOption(s, AudioFileFormat.mp3, 'mp3');
+      addAudioOption(s, AudioFileFormat.m4a, 'm4a');
+    }
+    for (final s in opusStreams) {
+      addAudioOption(s, AudioFileFormat.webm, 'webm');
+    }
+
+    // ─── Build Detailed Video Options ────────────────────────────────────────
+    final videoOptions = <VideoStreamOption>[];
+    final seenVideoKeys = <String>{};
+
+    // Sort adaptive video streams from highest resolution + fps + bitrate
+    final sortedVideoOnly = manifest.videoOnly.sortByVideoQuality();
+    for (final v in sortedVideoOnly) {
+      final container = v.container.name.toLowerCase();
+      final rawCodec = v.videoCodec.toLowerCase();
+      final readableCodec = _readableVideoCodec(rawCodec);
+
+      if (readableCodec == 'AV1' && !allowAv1InMp4 && container == 'mp4') {
+        continue;
+      }
+
+      // Skip odd codecs we can't cleanly mux on Android
+      final isWebm = container == 'webm';
+      if (isWebm && readableCodec != 'VP9' && readableCodec != 'VP8') continue;
+      if (!isWebm &&
+          readableCodec != 'H.264' &&
+          readableCodec != 'AV1' &&
+          readableCodec != 'H.265') {
+        continue;
+      }
+
+      final pairedAudio = isWebm ? (defaultOpus ?? defaultAac) : defaultAac;
+      if (pairedAudio == null && manifest.muxed.isEmpty) continue;
+
+      final height = v.videoResolution.height;
+      final quality = VideoQualityExtension.fromHeight(height);
+      final fps = v.framerate.framesPerSecond.round();
+      final isHdr = v.qualityLabel.toUpperCase().contains('HDR');
+      final fpsBucket = fps >= 48 ? 60 : 30;
+      final key = '${height}_${fpsBucket}_${container}_${readableCodec}_$isHdr';
+      if (!seenVideoKeys.add(key)) continue;
+
+      final compatNote = switch (readableCodec) {
+        'H.264' => 'Máxima compatibilidad (TV, galería, redes)',
+        'VP9' => height >= 1440
+            ? 'Ultra HD hasta 4K · WebM nativo'
+            : 'Alta compresión (-40% peso)',
+        'AV1' => 'Ultra ligero · Android 10+',
+        _ => 'Video adaptativo',
+      };
+
+      videoOptions.add(
+        VideoStreamOption(
+          id: '${v.tag}+${pairedAudio?.tag ?? 0}',
+          quality: quality,
+          height: height,
+          width: v.videoResolution.width,
+          fps: fps,
+          container: isWebm ? 'webm' : 'mp4',
+          videoCodec: readableCodec,
+          rawVideoCodec: v.videoCodec,
+          audioCodec: isWebm ? 'Opus' : 'AAC',
+          videoItag: v.tag,
+          audioItag: pairedAudio?.tag,
+          isMuxed: false,
+          isHdr: isHdr,
+          videoSizeBytes: v.size.totalBytes,
+          audioSizeBytes: pairedAudio?.size.totalBytes ?? 0,
+          bitrateKbps: v.bitrate.kiloBitsPerSecond.round(),
+          compatibilityNote: compatNote,
+        ),
+      );
+    }
+
+    // Add direct muxed options (e.g., itag 18 360p fast zero-mux download)
+    for (final m in manifest.muxed.sortByVideoQuality()) {
+      final height = m.videoResolution.height;
+      final quality = VideoQualityExtension.fromHeight(height);
+      final fps = m.framerate.framesPerSecond.round();
+      final key = '${height}_muxed_${m.tag}';
+      if (!seenVideoKeys.add(key)) continue;
+
+      videoOptions.add(
+        VideoStreamOption(
+          id: '${m.tag}',
+          quality: quality,
+          height: height,
+          width: m.videoResolution.width,
+          fps: fps,
+          container: 'mp4',
+          videoCodec: 'H.264 Directo',
+          rawVideoCodec: m.videoCodec,
+          audioCodec: 'AAC',
+          videoItag: m.tag,
+          audioItag: null,
+          isMuxed: true,
+          videoSizeBytes: m.size.totalBytes,
+          audioSizeBytes: 0,
+          bitrateKbps: m.bitrate.kiloBitsPerSecond.round(),
+          compatibilityNote: 'Descarga directa en 1 paso (más rápida)',
+        ),
+      );
+    }
+
+    // Order by height desc, then H.264/MP4 before VP9 before AV1, then FPS desc
+    videoOptions.sort((a, b) {
+      final h = b.height.compareTo(a.height);
+      if (h != 0) return h;
+      final f = b.fps.compareTo(a.fps);
+      if (f != 0) return f;
+      int codecRank(VideoStreamOption o) {
+        if (o.isMuxed && o.height <= 360) return 0;
+        if (o.videoCodec == 'H.264') return 1;
+        if (o.videoCodec == 'VP9') return 2;
+        if (o.videoCodec == 'AV1') return 3;
+        return 4;
+      }
+
+      return codecRank(a).compareTo(codecRank(b));
+    });
+
+    final qualities = <VideoQuality>{VideoQuality.best};
+    for (final opt in videoOptions) {
+      qualities.add(opt.quality);
+    }
+
+    return _ParsedManifestOptions(
+      availableQualities: qualities.toList(),
+      videoOptions: videoOptions,
+      audioOptions: audioOptions,
+      defaultAudioSizeBytes:
+          defaultAac?.size.totalBytes ?? defaultOpus?.size.totalBytes,
+      defaultVideoSizeBytes:
+          videoOptions.isNotEmpty ? videoOptions.first.totalSizeBytes : null,
+    );
+  }
+
+  static AudioOnlyStreamInfo? _pickAudioStream(
+    StreamManifest manifest, {
+    required String audioExtension,
+    int? requestedItag,
+    String? audioLanguage,
+  }) {
+    final audioStreams = manifest.audioOnly.toList()
+      ..sort(
+        (a, b) => b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond),
+      );
+    if (audioStreams.isEmpty) return null;
+
+    if (requestedItag != null) {
+      final exact = audioStreams.where((s) => s.tag == requestedItag).toList();
+      if (exact.isNotEmpty) return exact.first;
+    }
+
+    final wantWebm = audioExtension.toLowerCase() == 'webm';
+    final filtered = audioStreams.where((s) {
+      final c = s.container.name.toLowerCase();
+      final codec = s.audioCodec.toLowerCase();
+      if (wantWebm) return c == 'webm' && codec.contains('opus');
+      return c == 'mp4' &&
+          (codec.contains('mp4a') || codec.contains('aac')) &&
+          s.tag != 258 &&
+          s.tag != 328 &&
+          s.tag != 380;
+    }).toList();
+
+    final pool = filtered.isNotEmpty ? filtered : audioStreams;
+
+    if (audioLanguage != null && audioLanguage.isNotEmpty) {
+      final langMatches = pool
+          .where((s) => s.audioTrack?.displayName == audioLanguage)
+          .toList();
+      if (langMatches.isNotEmpty) {
+        return langMatches.firstWhere(
+          (s) => wantWebm ? s.tag == 251 : s.tag == 140,
+          orElse: () => langMatches.first,
         );
       }
-      rethrow;
     }
+
+    return pool.firstWhere(
+      (s) => wantWebm ? s.tag == 251 : s.tag == 140,
+      orElse: () => pool.first,
+    );
+  }
+
+  static VideoOnlyStreamInfo? _pickVideoOnlyStream(
+    StreamManifest manifest, {
+    required VideoQuality quality,
+    required VideoFormatPreference preference,
+    required bool allowAv1InMp4,
+  }) {
+    final all = manifest.videoOnly.sortByVideoQuality();
+    if (all.isEmpty) return null;
+
+    final targetHeight = quality.heightPixels;
+    final heightFiltered = (targetHeight == null || quality == VideoQuality.best)
+        ? all
+        : all.where((s) => s.videoResolution.height <= targetHeight).toList();
+
+    final pool = heightFiltered.isNotEmpty ? heightFiltered : all;
+
+    // Group at top matching height
+    final topHeight = pool.first.videoResolution.height;
+    final topCandidates =
+        pool.where((s) => s.videoResolution.height == topHeight).toList();
+
+    bool isH264(VideoOnlyStreamInfo s) =>
+        s.videoCodec.toLowerCase().contains('avc');
+    bool isVp9(VideoOnlyStreamInfo s) =>
+        s.container.name.toLowerCase() == 'webm' &&
+        s.videoCodec.toLowerCase().contains('vp9');
+    bool isAv1(VideoOnlyStreamInfo s) =>
+        allowAv1InMp4 && s.videoCodec.toLowerCase().contains('av01');
+
+    if (preference == VideoFormatPreference.mp4) {
+      return topCandidates.firstWhere(
+        isH264,
+        orElse: () => topCandidates.firstWhere(
+          isAv1,
+          orElse: () => pool.firstWhere(isH264, orElse: () => topCandidates.first),
+        ),
+      );
+    }
+
+    if (preference == VideoFormatPreference.webm) {
+      return topCandidates.firstWhere(
+        isVp9,
+        orElse: () => pool.firstWhere(isVp9, orElse: () => topCandidates.first),
+      );
+    }
+
+    // Auto: H.264 for <= 1080p, VP9 for 1440p/4K
+    if (topHeight >= 1440) {
+      return topCandidates.firstWhere(
+        isVp9,
+        orElse: () => topCandidates.firstWhere(
+          isAv1,
+          orElse: () => topCandidates.first,
+        ),
+      );
+    }
+
+    return topCandidates.firstWhere(
+      isH264,
+      orElse: () => topCandidates.firstWhere(
+        isVp9,
+        orElse: () => topCandidates.first,
+      ),
+    );
+  }
+
+  static String _readableVideoCodec(String raw) {
+    final c = raw.toLowerCase();
+    if (c.contains('avc')) return 'H.264';
+    if (c.contains('vp09') || c.contains('vp9')) return 'VP9';
+    if (c.contains('vp8')) return 'VP8';
+    if (c.contains('av01')) return 'AV1';
+    if (c.contains('hev') || c.contains('hvc')) return 'H.265';
+    return raw.toUpperCase();
+  }
+
+  static String _audioTierLabel(int kbps, AudioFileFormat format) {
+    if (kbps >= 180) return 'Máxima';
+    if (kbps >= 110) return 'Alta';
+    if (kbps >= 65) return 'Media';
+    return 'Ligera';
+  }
+
+  static Exception _mapFriendlyException(Object e) {
+    if (e is Exception) {
+      final msg = e.toString();
+      if (msg.contains('Error de red:') ||
+          msg.contains('restricciones de edad') ||
+          msg.contains('no está disponible') ||
+          msg.contains('ha limitado las solicitudes')) {
+        return e;
+      }
+    }
+    final str = e.toString().toLowerCase();
+    if (str.contains('failed host lookup') ||
+        str.contains('socket') ||
+        str.contains('network') ||
+        str.contains('errno = 7') ||
+        str.contains('connection refused') ||
+        str.contains('handshake failed') ||
+        str.contains('timed out')) {
+      return Exception('Error de red: Comprueba tus datos móviles o Wi-Fi');
+    }
+    if (str.contains('unplayable') ||
+        str.contains('age') ||
+        str.contains('restricted') ||
+        str.contains('login_required') ||
+        str.contains('sign in') ||
+        str.contains('transientfailure') ||
+        str.contains('bot')) {
+      return Exception(
+        'El video tiene restricciones de edad o está bloqueado por YouTube',
+      );
+    }
+    return Exception('No se pudo obtener la información del enlace: $e');
   }
 
   void close() {
     _yt.close();
     _httpClient.close();
   }
+}
+
+class _ManifestFetchResult {
+  final StreamManifest manifest;
+  final YoutubeApiClient client;
+  const _ManifestFetchResult({required this.manifest, required this.client});
+}
+
+class _ParsedManifestOptions {
+  final List<VideoQuality> availableQualities;
+  final List<VideoStreamOption> videoOptions;
+  final List<AudioStreamOption> audioOptions;
+  final int? defaultAudioSizeBytes;
+  final int? defaultVideoSizeBytes;
+
+  const _ParsedManifestOptions({
+    required this.availableQualities,
+    required this.videoOptions,
+    required this.audioOptions,
+    this.defaultAudioSizeBytes,
+    this.defaultVideoSizeBytes,
+  });
 }

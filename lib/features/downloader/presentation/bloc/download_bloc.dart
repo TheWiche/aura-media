@@ -10,6 +10,7 @@ import 'package:medias_download/core/services/task_persistence_service.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
 import 'package:medias_download/features/downloader/data/datasources/youtube_extractor.dart';
 import 'package:medias_download/features/downloader/data/models/download_task.dart';
+import 'package:medias_download/features/downloader/data/models/media_metadata.dart';
 import 'package:medias_download/features/downloader/domain/queue/download_queue_manager.dart';
 import 'download_event.dart';
 import 'download_state.dart';
@@ -25,6 +26,7 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
 
   StreamSubscription<List<DownloadTask>>? _queueSubscription;
   bool _taskDataCallbackAttached = false;
+  int _analysisGeneration = 0;
 
   DownloadBloc({
     DownloadQueueManager? queueManager,
@@ -118,6 +120,8 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
     final url = event.url.trim();
     if (url.isEmpty) return;
 
+    final generation = ++_analysisGeneration;
+
     emit(state.copyWith(
       isLoadingMetadata: true,
       clearError: true,
@@ -126,19 +130,35 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
 
     try {
       if (YoutubeExtractor.isYoutubeUrl(url)) {
-        final meta = await _youtubeExtractor.fetchMetadata(url);
+        final meta = await _youtubeExtractor.fetchMetadataProgressive(
+          url,
+          onProgress: (partial) {
+            if (isClosed || emit.isDone || generation != _analysisGeneration) {
+              return;
+            }
+            emit(state.copyWith(
+              isLoadingMetadata: !partial.analysisStage.hasStreams,
+              previewMetadata: partial,
+              clearError: true,
+            ));
+          },
+        );
+        if (isClosed || emit.isDone || generation != _analysisGeneration) return;
         emit(state.copyWith(
           isLoadingMetadata: false,
           previewMetadata: meta,
+          clearError: true,
         ));
       } else {
         final meta = await _genericExtractor.fetchMetadata(url);
+        if (isClosed || emit.isDone || generation != _analysisGeneration) return;
         emit(state.copyWith(
           isLoadingMetadata: false,
           previewMetadata: meta,
         ));
       }
     } catch (e) {
+      if (isClosed || emit.isDone || generation != _analysisGeneration) return;
       final raw = e.toString().replaceFirst("Exception: ", "").trim();
       final lower = raw.toLowerCase();
       final errorMsg = (lower.contains("comprueba tus datos móviles") ||
@@ -156,6 +176,7 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
               : raw;
       emit(state.copyWith(
         isLoadingMetadata: false,
+        clearMetadata: true,
         metadataError: errorMsg,
       ));
     }
@@ -165,7 +186,12 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
     ClearMetadataEvent event,
     Emitter<DownloadState> emit,
   ) {
-    emit(state.copyWith(clearMetadata: true, clearError: true));
+    _analysisGeneration++;
+    emit(state.copyWith(
+      clearMetadata: true,
+      clearError: true,
+      isLoadingMetadata: false,
+    ));
   }
 
   Future<void> _onEnqueueDownload(
@@ -183,13 +209,15 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
       audioExt = SettingsService.instance.getAudioFormat().name;
     } catch (_) {}
 
-    final extension = event.mediaType == MediaType.audio ? audioExt : 'mp4';
+    final extension = event.fileExtension ??
+        (event.mediaType == MediaType.audio ? audioExt : 'mp4');
     final title =
         event.metadata?.title ?? 'Descarga_${DateTime.now().millisecondsSinceEpoch}';
 
-    final initialTotalBytes = event.mediaType == MediaType.audio
-        ? (event.metadata?.audioSizeBytes ?? 0)
-        : (event.metadata?.videoSizeBytes ?? 0);
+    final initialTotalBytes = event.estimatedTotalBytes ??
+        (event.mediaType == MediaType.audio
+            ? (event.metadata?.audioSizeBytes ?? 0)
+            : (event.metadata?.videoSizeBytes ?? 0));
 
     final task = DownloadTask(
       id: taskId,
@@ -201,6 +229,10 @@ class DownloadBloc extends Bloc<DownloadEvent, DownloadState> {
       mediaType: event.mediaType,
       quality: event.quality,
       fileExtension: extension,
+      videoItag: event.videoItag,
+      audioItag: event.audioItag,
+      audioLanguage: event.audioLanguage,
+      specSummary: event.specSummary,
       totalBytes: initialTotalBytes,
       createdAt: DateTime.now(),
       status: DownloadStatus.queued,

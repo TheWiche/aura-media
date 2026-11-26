@@ -32,10 +32,11 @@
 * Preselecciona **Solo Audio** por defecto para descargar en un toque y vuelve automáticamente a YouTube al iniciar la descarga.
 * Configurable desde **Ajustes** entre tres modos: **Modal rápido**, **Auto-descarga instantánea** o **Abrir app completa**.
 
-### 🎧 Extracción local y formatos diferenciados
-* **100% en el dispositivo:** sin servidores externos ni APIs intermedias (`youtube_explode_dart` vía `oEmbed` + Innertube y extractor directo HTTP para archivos web).
-* **Extracción nativa en Android:** `MediaExtractor` + `MediaMuxer` en Kotlin extraen la pista de audio sin depender de binarios pesados de FFmpeg.
-* **Audio (`MP3` / `M4A`) y Video (`MP4`):** selector de calidades (`Mejor`, `1080p`, `720p`, `480p`, `360p`) con tamaños estimados reales antes de descargar.
+### 🎧 Análisis progresivo y formatos/calidades detalladas
+* **Análisis ultrarrápido por etapas (`0 ms` → segundo plano):** muestra portada y datos básicos al instante (`oEmbed`), puebla calidades reales mediante Innertube `androidVr` en paralelo y completa duración o pistas adicionales detrás de escena sin bloquear la descarga.
+* **100% en el dispositivo:** sin servidores externos ni binarios de FFmpeg; `MediaExtractor` + `MediaMuxer` en Kotlin combinan video y audio adaptativos (`MP4` y `WEBM`) y extraen pistas de audio limpias de forma nativa.
+* **Video (`4K 2160p`, `2K 1440p`, `1080p60`, `720p60`, `480p`, `360p`, `240p`, `144p`):** elige entre **`MP4` (`H.264 / AV1 + AAC`)**, **`WEBM` (`VP9 + Opus`)** y descarga directa `MP4` 1 paso, mostrando códec, FPS y peso total combinado.
+* **Audio (`MP3`, `M4A AAC`, `OPUS WebM`):** selector de formato y bitrate real en kbps, idioma de pista (si aplica) y tamaño exacto en MB.
 
 ### 📂 Carpetas separadas y gestión inteligente de archivos
 * **Rutas independientes** para **Audio** (`Download/AuraMedia/Audio` por defecto) y **Video** (`Download/AuraMedia/Video` por defecto) configurables mediante el selector nativo de carpetas de Android (`ACTION_OPEN_DOCUMENT_TREE`).
@@ -57,7 +58,7 @@
 
 ## 📱 Descarga e instalación (APK)
 
-1. Ve a la sección de [**Releases**](https://github.com/TheWiche/aura-media/releases/latest) y descarga **`aura_v1.4.0_arm64.apk`** (optimizado para dispositivos Android ARM64 modernos).
+1. Ve a la sección de [**Releases**](https://github.com/TheWiche/aura-media/releases/latest) y descarga **`aura_v1.5.0_arm64.apk`** (optimizado para dispositivos Android ARM64 modernos).
 2. Instala el APK en tu dispositivo Android.
 3. En **Ajustes** dentro de la app podrás conceder:
    * **Permiso de almacenamiento / Acceso a todos los archivos** (necesario en Android 11+ si deseas guardar en carpetas personalizadas como `Music/` o `Movies/`).
@@ -113,7 +114,7 @@ flutter pub get
 # Análisis estático
 flutter analyze
 
-# Ejecutar suite de pruebas (27 tests unitarios y de widgets)
+# Ejecutar suite de pruebas (33 tests unitarios y de widgets)
 flutter test
 
 # Compilar APK de producción para ARM64
@@ -129,6 +130,7 @@ flutter build apk --release --target-platform android-arm64
 La suite en [`test/`](test/) cubre:
 * [`aura_design_system_test.dart`](test/aura_design_system_test.dart): tokens de `AuraColors`, temas `AuraTheme.dark` / `light` y componentes `AuraButton`, `AuraFormatSelector`, `AuraDownloadCard` y `AuraBottomNavigation`.
 * [`aura_customization_test.dart`](test/aura_customization_test.dart): modo AMOLED + acentos globales (`AuraThemeTokens`), tinte dinámico de `AuraLogo`, centrado horizontal de `Solo Audio` / `Video` y persistencia de reproductores/animaciones en `SettingsService`.
+* [`progressive_options_test.dart`](test/progressive_options_test.dart): análisis progresivo por etapas (`AnalysisStage`), selección multi-códec/multi-bitrate (`MP4 H.264/AV1`, `WEBM VP9`, `M4A`, `OPUS`, `MP3`) y compatibilidad retroactiva de `DownloadTask`.
 * [`settings_storage_and_modal_test.dart`](test/settings_storage_and_modal_test.dart): persistencia de ajustes, carpetas separadas MP3/MP4, política de duplicados, serialización de `DownloadTask` y flujo completo de `ShareModalScreen`.
 * [`extraction_and_queue_test.dart`](test/extraction_and_queue_test.dart) y [`live_extraction_verification_test.dart`](test/live_extraction_verification_test.dart): detección y limpieza de URLs, formateadores y ciclo de vida de `DownloadQueueManager`.
 * [`widget_test.dart`](test/widget_test.dart): smoke test de arranque completo de `AuraApp`.

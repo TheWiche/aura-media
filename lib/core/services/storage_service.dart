@@ -98,7 +98,7 @@ class StorageService {
 
   /// Builds a temporary path inside the OS temp/cache directory so incomplete `.tmp`
   /// downloads never clutter the user's Music/Video folders.
-  Future<String> getTempDownloadPath(String taskId) async {
+  Future<String> getTempDownloadPath(String taskId, {String? suffix}) async {
     Directory tempDir;
     try {
       tempDir = await getTemporaryDirectory();
@@ -109,7 +109,8 @@ class StorageService {
     if (!await workDir.exists()) {
       await workDir.create(recursive: true);
     }
-    return '${workDir.path}/$taskId.tmp';
+    final tag = (suffix == null || suffix.isEmpty) ? '' : '.$suffix';
+    return '${workDir.path}/$taskId$tag.tmp';
   }
 
   /// Builds the final target path for a file in the appropriate [mediaType] folder,

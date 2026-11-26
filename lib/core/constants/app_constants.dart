@@ -38,6 +38,7 @@ class AppConstants {
   static const String prefVideoPlayerName = 'pref_video_player_name';
 
   static const String prefDefaultQuality = 'pref_default_quality';
+  static const String prefDefaultVideoFormat = 'pref_default_video_format';
   static const String prefDefaultMediaType = 'pref_default_media_type';
   static const String prefAudioDownloadPath = 'pref_audio_download_path';
   static const String prefVideoDownloadPath = 'pref_video_download_path';

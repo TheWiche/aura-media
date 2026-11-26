@@ -13,6 +13,43 @@ enum ShareBehavior {
 enum AudioFileFormat {
   mp3,
   m4a,
+  webm,
+}
+
+extension AudioFileFormatExtension on AudioFileFormat {
+  String get shortLabel => switch (this) {
+        AudioFileFormat.mp3 => 'MP3',
+        AudioFileFormat.m4a => 'M4A',
+        AudioFileFormat.webm => 'OPUS',
+      };
+
+  String get extensionName => name; // 'mp3', 'm4a', 'webm'
+
+  String get description => switch (this) {
+        AudioFileFormat.mp3 => 'Compatible universal',
+        AudioFileFormat.m4a => 'AAC nativo Apple/Android',
+        AudioFileFormat.webm => 'Opus WebM alta eficiencia',
+      };
+}
+
+enum VideoFormatPreference {
+  auto,
+  mp4,
+  webm,
+}
+
+extension VideoFormatPreferenceExtension on VideoFormatPreference {
+  String get label => switch (this) {
+        VideoFormatPreference.auto => 'Auto (óptimo por calidad)',
+        VideoFormatPreference.mp4 => 'MP4 (H.264 / AV1 + AAC)',
+        VideoFormatPreference.webm => 'WEBM (VP9 + Opus)',
+      };
+
+  String get shortLabel => switch (this) {
+        VideoFormatPreference.auto => 'Auto',
+        VideoFormatPreference.mp4 => 'MP4',
+        VideoFormatPreference.webm => 'WEBM',
+      };
 }
 
 enum DuplicateFilePolicy {
@@ -190,24 +227,36 @@ class SettingsService {
     final raw = _pOrNull?.getString(AppConstants.prefDefaultQuality);
     return switch (raw) {
       'best' => VideoQuality.best,
+      'p2160' => VideoQuality.p2160,
+      'p1440' => VideoQuality.p1440,
       'p1080' => VideoQuality.p1080,
       'p720' => VideoQuality.p720,
       'p480' => VideoQuality.p480,
       'p360' => VideoQuality.p360,
+      'p240' => VideoQuality.p240,
+      'p144' => VideoQuality.p144,
       _ => VideoQuality.best,
     };
   }
 
   Future<void> setDefaultQuality(VideoQuality quality) async {
     await initialize();
-    final raw = switch (quality) {
-      VideoQuality.best => 'best',
-      VideoQuality.p1080 => 'p1080',
-      VideoQuality.p720 => 'p720',
-      VideoQuality.p480 => 'p480',
-      VideoQuality.p360 => 'p360',
+    await _prefs!.setString(AppConstants.prefDefaultQuality, quality.name);
+    _notifyChanged();
+  }
+
+  VideoFormatPreference getDefaultVideoFormat() {
+    final raw = _pOrNull?.getString(AppConstants.prefDefaultVideoFormat);
+    return switch (raw) {
+      'mp4' => VideoFormatPreference.mp4,
+      'webm' => VideoFormatPreference.webm,
+      _ => VideoFormatPreference.auto,
     };
-    await _prefs!.setString(AppConstants.prefDefaultQuality, raw);
+  }
+
+  Future<void> setDefaultVideoFormat(VideoFormatPreference format) async {
+    await initialize();
+    await _prefs!.setString(AppConstants.prefDefaultVideoFormat, format.name);
     _notifyChanged();
   }
 
@@ -279,15 +328,16 @@ class SettingsService {
 
   AudioFileFormat getAudioFormat() {
     final raw = _pOrNull?.getString(AppConstants.prefAudioFormat);
-    return raw == 'm4a' ? AudioFileFormat.m4a : AudioFileFormat.mp3;
+    return switch (raw) {
+      'm4a' => AudioFileFormat.m4a,
+      'webm' || 'opus' => AudioFileFormat.webm,
+      _ => AudioFileFormat.mp3,
+    };
   }
 
   Future<void> setAudioFormat(AudioFileFormat format) async {
     await initialize();
-    await _prefs!.setString(
-      AppConstants.prefAudioFormat,
-      format == AudioFileFormat.m4a ? 'm4a' : 'mp3',
-    );
+    await _prefs!.setString(AppConstants.prefAudioFormat, format.name);
     _notifyChanged();
   }
 

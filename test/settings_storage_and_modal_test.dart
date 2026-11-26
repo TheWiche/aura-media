@@ -18,6 +18,15 @@ class _FakeYoutubeExtractor extends YoutubeExtractor {
   Future<MediaMetadata> fetchMetadata(String url) async => metadata;
 
   @override
+  Future<MediaMetadata> fetchMetadataProgressive(
+    String url, {
+    required void Function(MediaMetadata partial) onProgress,
+  }) async {
+    onProgress(metadata);
+    return metadata;
+  }
+
+  @override
   void close() {}
 }
 
