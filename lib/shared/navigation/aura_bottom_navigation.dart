@@ -19,15 +19,13 @@ class AuraBottomNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primary = AuraColors.primary(isDark);
-    final badgeFg = isDark ? const Color(0xFF171D15) : AuraColors.white;
+    final tokens = AuraThemeTokens.of(context);
 
     return Container(
       decoration: BoxDecoration(
-        color: AuraColors.card(isDark),
+        color: tokens.card,
         border: Border(
-          top: BorderSide(color: AuraColors.divider(isDark), width: 1),
+          top: BorderSide(color: tokens.divider, width: 1),
         ),
       ),
       child: NavigationBar(
@@ -43,28 +41,28 @@ class AuraBottomNavigation extends StatelessWidget {
           NavigationDestination(
             icon: Badge(
               isLabelVisible: activeCount > 0,
-              backgroundColor: primary,
-              textColor: badgeFg,
+              backgroundColor: tokens.primary,
+              textColor: tokens.onPrimary,
               label: Text(
                 '$activeCount',
                 style: AuraTypography.metricSmall.copyWith(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: badgeFg,
+                  color: tokens.onPrimary,
                 ),
               ),
               child: const Icon(Icons.downloading_outlined),
             ),
             selectedIcon: Badge(
               isLabelVisible: activeCount > 0,
-              backgroundColor: primary,
-              textColor: badgeFg,
+              backgroundColor: tokens.primary,
+              textColor: tokens.onPrimary,
               label: Text(
                 '$activeCount',
                 style: AuraTypography.metricSmall.copyWith(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: badgeFg,
+                  color: tokens.onPrimary,
                 ),
               ),
               child: const Icon(Icons.downloading_rounded),
@@ -74,28 +72,28 @@ class AuraBottomNavigation extends StatelessWidget {
           NavigationDestination(
             icon: Badge(
               isLabelVisible: completedCount > 0,
-              backgroundColor: AuraColors.audio(isDark),
-              textColor: badgeFg,
+              backgroundColor: tokens.audio,
+              textColor: tokens.isDark ? const Color(0xFF062118) : Colors.white,
               label: Text(
                 '$completedCount',
                 style: AuraTypography.metricSmall.copyWith(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: badgeFg,
+                  color: tokens.isDark ? const Color(0xFF062118) : Colors.white,
                 ),
               ),
               child: const Icon(Icons.check_circle_outline_rounded),
             ),
             selectedIcon: Badge(
               isLabelVisible: completedCount > 0,
-              backgroundColor: AuraColors.audio(isDark),
-              textColor: badgeFg,
+              backgroundColor: tokens.audio,
+              textColor: tokens.isDark ? const Color(0xFF062118) : Colors.white,
               label: Text(
                 '$completedCount',
                 style: AuraTypography.metricSmall.copyWith(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: badgeFg,
+                  color: tokens.isDark ? const Color(0xFF062118) : Colors.white,
                 ),
               ),
               child: const Icon(Icons.check_circle_rounded),

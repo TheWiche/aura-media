@@ -18,10 +18,7 @@ class MediaPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primary = AuraColors.primary(isDark);
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     return AuraCard(
       padding: const EdgeInsets.all(AuraDimensions.space4),
@@ -33,19 +30,19 @@ class MediaPreviewCard extends StatelessWidget {
             child: Container(
               width: 88,
               height: 88,
-              color: primary.withValues(alpha: 0.12),
+              color: tokens.primary.withValues(alpha: 0.12),
               child: metadata.thumbnailUrl != null
                   ? Image.network(
                       metadata.thumbnailUrl!,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => Icon(
                         Icons.movie_creation_outlined,
-                        color: textSecondary,
+                        color: tokens.textSecondary,
                       ),
                     )
                   : Icon(
                       Icons.video_library_outlined,
-                      color: textSecondary,
+                      color: tokens.textSecondary,
                     ),
             ),
           ),
@@ -60,7 +57,7 @@ class MediaPreviewCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: AuraTypography.headingSmall.copyWith(
                     fontSize: 15,
-                    color: textPrimary,
+                    color: tokens.textPrimary,
                     height: 1.3,
                   ),
                 ),
@@ -70,7 +67,7 @@ class MediaPreviewCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AuraTypography.bodySmall.copyWith(
-                    color: textSecondary,
+                    color: tokens.textSecondary,
                   ),
                 ),
                 const SizedBox(height: AuraDimensions.space2),
@@ -82,13 +79,13 @@ class MediaPreviewCard extends StatelessWidget {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: primary.withValues(alpha: 0.14),
+                        color: tokens.primary.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         metadata.platform,
                         style: AuraTypography.bodySmall.copyWith(
-                          color: primary,
+                          color: tokens.primary,
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                         ),
@@ -99,7 +96,7 @@ class MediaPreviewCard extends StatelessWidget {
                       Text(
                         Formatters.formatDuration(metadata.duration!),
                         style: AuraTypography.metricSmall.copyWith(
-                          color: textSecondary,
+                          color: tokens.textSecondary,
                         ),
                       ),
                     ],
@@ -115,7 +112,7 @@ class MediaPreviewCard extends StatelessWidget {
               child: Icon(
                 Icons.close_rounded,
                 size: 18,
-                color: textSecondary,
+                color: tokens.textSecondary,
               ),
             ),
           ),

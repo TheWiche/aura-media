@@ -27,18 +27,15 @@ class AuraDownloadCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = AuraThemeTokens.of(context);
     final isAudio = task.mediaType == MediaType.audio;
-    final formatColor =
-        isAudio ? AuraColors.audio(isDark) : AuraColors.video(isDark);
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
+    final formatColor = isAudio ? tokens.audio : tokens.video;
 
     final progressColor = switch (task.status) {
-      DownloadStatus.paused => AuraColors.warning(isDark),
-      DownloadStatus.failed => AuraColors.error(isDark),
-      DownloadStatus.completed => AuraColors.audio(isDark),
-      _ => AuraColors.primary(isDark),
+      DownloadStatus.paused => tokens.warning,
+      DownloadStatus.failed => tokens.error,
+      DownloadStatus.completed => tokens.audio,
+      _ => tokens.primary,
     };
 
     final extUpper = task.fileExtension.toUpperCase();
@@ -59,7 +56,6 @@ class AuraDownloadCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Thumbnail
               ClipRRect(
                 borderRadius: AuraDimensions.radiusSmall,
                 child: Container(
@@ -88,7 +84,6 @@ class AuraDownloadCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: AuraDimensions.space3),
-              // Title & format badge
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,7 +94,7 @@ class AuraDownloadCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: AuraTypography.label.copyWith(
                         fontSize: 15,
-                        color: textPrimary,
+                        color: tokens.textPrimary,
                       ),
                     ),
                     const SizedBox(height: AuraDimensions.space1),
@@ -124,7 +119,7 @@ class AuraDownloadCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: AuraDimensions.space2),
-                        _StatusPill(task: task),
+                        _StatusPill(task: task, tokens: tokens),
                       ],
                     ),
                   ],
@@ -135,7 +130,6 @@ class AuraDownloadCard extends StatelessWidget {
 
           const SizedBox(height: AuraDimensions.space3),
 
-          // Progress bar + monospace percentage
           Row(
             children: [
               Expanded(
@@ -153,7 +147,7 @@ class AuraDownloadCard extends StatelessWidget {
                     ? '...'
                     : '${task.progressPercent}%',
                 style: AuraTypography.metricMedium.copyWith(
-                  color: textPrimary,
+                  color: tokens.textPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -162,19 +156,16 @@ class AuraDownloadCard extends StatelessWidget {
 
           const SizedBox(height: AuraDimensions.space3),
 
-          // Metrics row (JetBrains Mono) + circular action buttons
           Row(
             children: [
               Expanded(
                 child: _buildMetricsRow(
-                  context: context,
-                  isDark: isDark,
+                  tokens: tokens,
                   speedText: speedText,
                   etaText: etaText,
-                  textSecondary: textSecondary,
                 ),
               ),
-              _buildActionButtons(context, isDark),
+              _buildActionButtons(tokens),
             ],
           ),
 
@@ -189,8 +180,8 @@ class AuraDownloadCard extends StatelessWidget {
               ),
               decoration: BoxDecoration(
                 color: (task.status == DownloadStatus.paused
-                        ? AuraColors.warning(isDark)
-                        : AuraColors.error(isDark))
+                        ? tokens.warning
+                        : tokens.error)
                     .withValues(alpha: 0.1),
                 borderRadius: AuraDimensions.radiusSmall,
               ),
@@ -202,8 +193,8 @@ class AuraDownloadCard extends StatelessWidget {
                         : Icons.error_outline_rounded,
                     size: 16,
                     color: task.status == DownloadStatus.paused
-                        ? AuraColors.warning(isDark)
-                        : AuraColors.error(isDark),
+                        ? tokens.warning
+                        : tokens.error,
                   ),
                   const SizedBox(width: AuraDimensions.space2),
                   Expanded(
@@ -213,8 +204,8 @@ class AuraDownloadCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: AuraTypography.bodySmall.copyWith(
                         color: task.status == DownloadStatus.paused
-                            ? AuraColors.warning(isDark)
-                            : AuraColors.error(isDark),
+                            ? tokens.warning
+                            : tokens.error,
                       ),
                     ),
                   ),
@@ -228,30 +219,26 @@ class AuraDownloadCard extends StatelessWidget {
   }
 
   Widget _buildMetricsRow({
-    required BuildContext context,
-    required bool isDark,
+    required AuraThemeTokens tokens,
     required String speedText,
     required String etaText,
-    required Color textSecondary,
   }) {
     if (task.status == DownloadStatus.queued) {
       return Text(
         'En espera de turno...',
-        style: AuraTypography.bodySmall.copyWith(color: textSecondary),
+        style: AuraTypography.bodySmall.copyWith(color: tokens.textSecondary),
       );
     }
     if (task.status == DownloadStatus.paused) {
       return Text(
         '${Formatters.formatBytes(task.downloadedBytes)} · Pausado',
-        style: AuraTypography.metricSmall.copyWith(color: textSecondary),
+        style: AuraTypography.metricSmall.copyWith(color: tokens.textSecondary),
       );
     }
     if (task.status == DownloadStatus.failed) {
       return Text(
         'Descarga interrumpida',
-        style: AuraTypography.bodySmall.copyWith(
-          color: AuraColors.error(isDark),
-        ),
+        style: AuraTypography.bodySmall.copyWith(color: tokens.error),
       );
     }
 
@@ -263,30 +250,24 @@ class AuraDownloadCard extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.bolt_rounded,
-              size: 14,
-              color: AuraColors.primary(isDark),
-            ),
+            Icon(Icons.bolt_rounded, size: 14, color: tokens.primary),
             const SizedBox(width: 3),
             Text(
               speedText,
-              style: AuraTypography.metricSmall.copyWith(color: textSecondary),
+              style:
+                  AuraTypography.metricSmall.copyWith(color: tokens.textSecondary),
             ),
           ],
         ),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.schedule_rounded,
-              size: 13,
-              color: textSecondary,
-            ),
+            Icon(Icons.schedule_rounded, size: 13, color: tokens.textSecondary),
             const SizedBox(width: 4),
             Text(
               etaText,
-              style: AuraTypography.metricSmall.copyWith(color: textSecondary),
+              style:
+                  AuraTypography.metricSmall.copyWith(color: tokens.textSecondary),
             ),
           ],
         ),
@@ -294,7 +275,7 @@ class AuraDownloadCard extends StatelessWidget {
     );
   }
 
-  Widget _buildActionButtons(BuildContext context, bool isDark) {
+  Widget _buildActionButtons(AuraThemeTokens tokens) {
     if (task.status == DownloadStatus.downloading) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -302,14 +283,16 @@ class AuraDownloadCard extends StatelessWidget {
           _CircleIconButton(
             icon: Icons.pause_rounded,
             tooltip: 'Pausar',
-            color: AuraColors.warning(isDark),
+            color: tokens.warning,
+            tokens: tokens,
             onPressed: onPause,
           ),
           const SizedBox(width: AuraDimensions.space2),
           _CircleIconButton(
             icon: Icons.close_rounded,
             tooltip: 'Cancelar',
-            color: AuraColors.error(isDark),
+            color: tokens.error,
+            tokens: tokens,
             onPressed: onCancel,
           ),
         ],
@@ -323,14 +306,16 @@ class AuraDownloadCard extends StatelessWidget {
           _CircleIconButton(
             icon: Icons.play_arrow_rounded,
             tooltip: 'Reanudar',
-            color: AuraColors.primary(isDark),
+            color: tokens.primary,
+            tokens: tokens,
             onPressed: onResume,
           ),
           const SizedBox(width: AuraDimensions.space2),
           _CircleIconButton(
             icon: Icons.delete_outline_rounded,
             tooltip: 'Eliminar',
-            color: AuraColors.textSecondary(isDark),
+            color: tokens.textSecondary,
+            tokens: tokens,
             onPressed: onRemove,
           ),
         ],
@@ -341,7 +326,8 @@ class AuraDownloadCard extends StatelessWidget {
       return _CircleIconButton(
         icon: Icons.close_rounded,
         tooltip: 'Quitar de la cola',
-        color: AuraColors.textSecondary(isDark),
+        color: tokens.textSecondary,
+        tokens: tokens,
         onPressed: onCancel,
       );
     }
@@ -353,14 +339,16 @@ class AuraDownloadCard extends StatelessWidget {
           _CircleIconButton(
             icon: Icons.refresh_rounded,
             tooltip: 'Reintentar',
-            color: AuraColors.primary(isDark),
+            color: tokens.primary,
+            tokens: tokens,
             onPressed: onRetry,
           ),
           const SizedBox(width: AuraDimensions.space2),
           _CircleIconButton(
             icon: Icons.delete_outline_rounded,
             tooltip: 'Eliminar',
-            color: AuraColors.textSecondary(isDark),
+            color: tokens.textSecondary,
+            tokens: tokens,
             onPressed: onRemove,
           ),
         ],
@@ -383,18 +371,18 @@ class AuraDownloadCard extends StatelessWidget {
 
 class _StatusPill extends StatelessWidget {
   final DownloadTask task;
-  const _StatusPill({required this.task});
+  final AuraThemeTokens tokens;
+  const _StatusPill({required this.task, required this.tokens});
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final (label, color) = switch (task.status) {
-      DownloadStatus.queued => ('En cola', AuraColors.video(isDark)),
-      DownloadStatus.downloading => ('Descargando', AuraColors.primary(isDark)),
-      DownloadStatus.paused => ('Pausado', AuraColors.warning(isDark)),
-      DownloadStatus.completed => ('Listo', AuraColors.audio(isDark)),
-      DownloadStatus.failed => ('Error', AuraColors.error(isDark)),
-      DownloadStatus.canceled => ('Cancelado', AuraColors.textSecondary(isDark)),
+      DownloadStatus.queued => ('En cola', tokens.video),
+      DownloadStatus.downloading => ('Descargando', tokens.primary),
+      DownloadStatus.paused => ('Pausado', tokens.warning),
+      DownloadStatus.completed => ('Listo', tokens.audio),
+      DownloadStatus.failed => ('Error', tokens.error),
+      DownloadStatus.canceled => ('Cancelado', tokens.textSecondary),
     };
 
     return Text(
@@ -411,24 +399,25 @@ class _CircleIconButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final Color color;
+  final AuraThemeTokens tokens;
   final VoidCallback? onPressed;
 
   const _CircleIconButton({
     required this.icon,
     required this.tooltip,
     required this.color,
+    required this.tokens,
     this.onPressed,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: isDark ? AuraColors.darkSurface : AuraColors.lightBackground,
+        color: tokens.surface,
         shape: CircleBorder(
-          side: BorderSide(color: AuraColors.divider(isDark), width: 1),
+          side: BorderSide(color: tokens.divider, width: 1),
         ),
         child: InkWell(
           onTap: onPressed,
@@ -436,7 +425,7 @@ class _CircleIconButton extends StatelessWidget {
           child: SizedBox(
             width: 34,
             height: 34,
-            child: Icon(icon, size: 18, color: color),
+            child: Center(child: Icon(icon, size: 18, color: color)),
           ),
         ),
       ),

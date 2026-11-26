@@ -14,9 +14,7 @@ class CompletedTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final audioColor = AuraColors.audio(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -24,7 +22,6 @@ class CompletedTab extends StatelessWidget {
 
         return Column(
           children: [
-            // Header Summary Banner
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AuraDimensions.space4,
@@ -42,12 +39,12 @@ class CompletedTab extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
-                        color: audioColor.withValues(alpha: 0.15),
+                        color: tokens.audio.withValues(alpha: 0.15),
                         borderRadius: AuraDimensions.radiusSmall,
                       ),
                       child: Icon(
                         Icons.folder_special_rounded,
-                        color: audioColor,
+                        color: tokens.audio,
                         size: 18,
                       ),
                     ),
@@ -56,7 +53,7 @@ class CompletedTab extends StatelessWidget {
                       child: Text(
                         '${completedList.length} archivo${completedList.length == 1 ? "" : "s"} guardado${completedList.length == 1 ? "" : "s"}',
                         style: AuraTypography.metricSmall.copyWith(
-                          color: textSecondary,
+                          color: tokens.textSecondary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -66,12 +63,12 @@ class CompletedTab extends StatelessWidget {
                         icon: Icon(
                           Icons.cleaning_services_rounded,
                           size: 16,
-                          color: textSecondary,
+                          color: tokens.textSecondary,
                         ),
                         label: Text(
                           'Limpiar',
                           style: AuraTypography.label.copyWith(
-                            color: textSecondary,
+                            color: tokens.textSecondary,
                             fontSize: 12,
                           ),
                         ),
@@ -86,10 +83,9 @@ class CompletedTab extends StatelessWidget {
               ),
             ),
 
-            // Files List or Empty State
             Expanded(
               child: completedList.isEmpty
-                  ? _buildEmptyState(context, isDark)
+                  ? _buildEmptyState(tokens)
                   : ListView.separated(
                       padding: const EdgeInsets.fromLTRB(
                         AuraDimensions.space4,
@@ -123,11 +119,7 @@ class CompletedTab extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context, bool isDark) {
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
-    final audioColor = AuraColors.audio(isDark);
-
+  Widget _buildEmptyState(AuraThemeTokens tokens) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: AuraDimensions.space8),
@@ -137,27 +129,28 @@ class CompletedTab extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: AuraColors.card(isDark),
+                color: tokens.card,
                 shape: BoxShape.circle,
-                border: Border.all(color: AuraColors.divider(isDark)),
+                border: Border.all(color: tokens.divider),
               ),
               child: Icon(
                 Icons.folder_open_rounded,
                 size: 46,
-                color: audioColor,
+                color: tokens.audio,
               ),
             ),
             const SizedBox(height: AuraDimensions.space5),
             Text(
               'No hay descargas completadas',
-              style: AuraTypography.headingSmall.copyWith(color: textPrimary),
+              style: AuraTypography.headingSmall
+                  .copyWith(color: tokens.textPrimary),
             ),
             const SizedBox(height: AuraDimensions.space2),
             Text(
               'Tus archivos de audio y video aparecerán aquí para reproducirlos o compartirlos.',
               textAlign: TextAlign.center,
               style: AuraTypography.bodySmall.copyWith(
-                color: textSecondary,
+                color: tokens.textSecondary,
                 height: 1.45,
               ),
             ),

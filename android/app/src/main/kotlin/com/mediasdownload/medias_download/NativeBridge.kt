@@ -3,6 +3,11 @@ package com.mediasdownload.medias_download
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -16,9 +21,11 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
+import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
@@ -36,7 +43,7 @@ class NativeBridge(
         const val REQUEST_PICK_DIRECTORY = 41091
         const val EXTRA_OPEN_URL = "com.mediasdownload.EXTRA_OPEN_URL"
 
-        private val audioExecutor = Executors.newSingleThreadExecutor()
+        private val backgroundExecutor = Executors.newSingleThreadExecutor()
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -111,7 +118,7 @@ class NativeBridge(
                 return
             }
 
-            audioExecutor.execute {
+            backgroundExecutor.execute {
                 try {
                     val success = extractAudioTrack(inputPath, outputPath)
                     mainHandler.post {
@@ -182,6 +189,27 @@ class NativeBridge(
                 }
             }
 
+            "getInstalledMediaPlayers" -> {
+                val mediaType = call.argument<String>("mediaType") ?: "audio"
+                backgroundExecutor.execute {
+                    val players = queryMediaPlayers(mediaType)
+                    mainHandler.post {
+                        result.success(players)
+                    }
+                }
+            }
+
+            "openMediaFile" -> {
+                val path = call.argument<String>("path")
+                val mimeType = call.argument<String>("mimeType") ?: "*/*"
+                val packageName = call.argument<String>("packageName")
+                if (path.isNullOrBlank()) {
+                    result.success(false)
+                    return
+                }
+                result.success(launchMediaFile(path, mimeType, packageName))
+            }
+
             "isWifiConnected" -> {
                 result.success(checkWifiConnected())
             }
@@ -229,6 +257,108 @@ class NativeBridge(
         }
     }
 
+    private fun queryMediaPlayers(mediaType: String): List<Map<String, Any>> {
+        val pm = context.packageManager
+        val isAudio = mediaType == "audio"
+        val mime = if (isAudio) "audio/*" else "video/*"
+        val sampleUri = if (isAudio) {
+            Uri.parse("content://media/external/audio/media/1")
+        } else {
+            Uri.parse("content://media/external/video/media/1")
+        }
+
+        val intents = listOf(
+            Intent(Intent.ACTION_VIEW).apply { setDataAndType(sampleUri, mime) },
+            Intent(Intent.ACTION_VIEW).apply { type = mime },
+        )
+
+        val resolvedMap = LinkedHashMap<String, ResolveInfo>()
+        for (queryIntent in intents) {
+            val matches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(
+                    queryIntent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(queryIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            }
+
+            for (info in matches) {
+                val pkg = info.activityInfo?.packageName ?: continue
+                if (pkg == context.packageName) continue
+                if (!resolvedMap.containsKey(pkg)) {
+                    resolvedMap[pkg] = info
+                }
+            }
+        }
+
+        val list = mutableListOf<Map<String, Any>>()
+        for ((pkg, info) in resolvedMap) {
+            val label = try {
+                info.loadLabel(pm).toString().trim()
+            } catch (_: Exception) {
+                pkg
+            }
+            if (label.isEmpty()) continue
+
+            val iconBytes = try {
+                drawableToPngBytes(info.loadIcon(pm), 72)
+            } catch (_: Exception) {
+                ByteArray(0)
+            }
+
+            list.add(
+                mapOf(
+                    "packageName" to pkg,
+                    "appName" to label,
+                    "iconBytes" to iconBytes,
+                )
+            )
+        }
+
+        list.sortBy { (it["appName"] as String).lowercase() }
+        return list
+    }
+
+    private fun drawableToPngBytes(drawable: Drawable, sizePx: Int): ByteArray {
+        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, sizePx, sizePx)
+        drawable.draw(canvas)
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
+        bitmap.recycle()
+        return stream.toByteArray()
+    }
+
+    private fun launchMediaFile(path: String, mimeType: String, packageName: String?): Boolean {
+        return try {
+            val file = File(path)
+            if (!file.exists()) return false
+
+            val authority = "${context.packageName}.aura.fileprovider"
+            val contentUri = FileProvider.getUriForFile(context, authority, file)
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(contentUri, mimeType)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+                if (!packageName.isNullOrBlank()) {
+                    setPackage(packageName)
+                }
+            }
+
+            val host = activity ?: context
+            host.startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun checkWifiConnected(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return true
@@ -254,7 +384,7 @@ class NativeBridge(
             val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 pm.getPackageInfo(
                     context.packageName,
-                    android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                    PackageManager.PackageInfoFlags.of(0)
                 )
             } else {
                 @Suppress("DEPRECATION")
@@ -266,9 +396,9 @@ class NativeBridge(
                 @Suppress("DEPRECATION")
                 pkgInfo.versionCode.toLong()
             }
-            "${pkgInfo.versionName ?: "1.3.0"}+$code"
+            "${pkgInfo.versionName ?: "1.4.0"}+$code"
         } catch (_: Exception) {
-            "1.3.0+10"
+            "1.4.0+11"
         }
     }
 

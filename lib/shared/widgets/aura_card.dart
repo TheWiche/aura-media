@@ -22,13 +22,13 @@ class AuraCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = AuraThemeTokens.of(context);
     final radius = borderRadius ?? AuraDimensions.radiusLarge;
-    final bg = backgroundColor ?? AuraColors.card(isDark);
+    final bg = backgroundColor ?? tokens.card;
     final border = borderColor ??
-        (isDark
-            ? AuraColors.darkDivider.withValues(alpha: 0.7)
-            : AuraColors.lightDivider);
+        (tokens.isDark
+            ? tokens.divider.withValues(alpha: 0.75)
+            : tokens.divider);
 
     final inner =
         padding != null ? Padding(padding: padding!, child: child) : child;
@@ -36,13 +36,13 @@ class AuraCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         borderRadius: radius,
-        boxShadow: isDark
+        boxShadow: tokens.isDark
             ? null
             : [
                 BoxShadow(
-                  color: AuraColors.black.withValues(alpha: 0.045),
-                  blurRadius: 12,
-                  offset: const Offset(0, 3),
+                  color: AuraColors.black.withValues(alpha: 0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
                 ),
               ],
       ),

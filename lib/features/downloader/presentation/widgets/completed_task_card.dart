@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../../core/services/media_opener_service.dart';
 import '../../../../core/theme/aura_colors.dart';
 import '../../../../core/theme/aura_dimensions.dart';
 import '../../../../core/theme/aura_typography.dart';
@@ -22,7 +23,10 @@ class CompletedTaskCard extends StatelessWidget {
   Future<void> _openFile(BuildContext context) async {
     if (task.savedPath == null) return;
     try {
-      final result = await OpenFilex.open(task.savedPath!);
+      final result = await MediaOpenerService.openFile(
+        task.savedPath!,
+        mediaType: task.mediaType,
+      );
       if (result.type != ResultType.done && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('No se pudo abrir el archivo: ${result.message}')),
@@ -49,10 +53,7 @@ class CompletedTaskCard extends StatelessWidget {
 
   void _showDeleteDialog(BuildContext context) {
     bool deleteFromDisk = true;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final errColor = AuraColors.error(isDark);
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     showDialog(
       context: context,
@@ -62,7 +63,8 @@ class CompletedTaskCard extends StatelessWidget {
             return AlertDialog(
               title: Text(
                 'Eliminar elemento',
-                style: AuraTypography.headingSmall.copyWith(color: textPrimary),
+                style: AuraTypography.headingSmall
+                    .copyWith(color: tokens.textPrimary),
               ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -71,7 +73,7 @@ class CompletedTaskCard extends StatelessWidget {
                   Text(
                     '¿Deseas eliminar "${task.title}" del historial?',
                     style: AuraTypography.bodyMedium.copyWith(
-                      color: textSecondary,
+                      color: tokens.textSecondary,
                     ),
                   ),
                   const SizedBox(height: AuraDimensions.space4),
@@ -83,7 +85,7 @@ class CompletedTaskCard extends StatelessWidget {
                       children: [
                         Checkbox(
                           value: deleteFromDisk,
-                          activeColor: errColor,
+                          activeColor: tokens.error,
                           onChanged: (val) =>
                               setState(() => deleteFromDisk = val ?? true),
                         ),
@@ -91,7 +93,7 @@ class CompletedTaskCard extends StatelessWidget {
                           child: Text(
                             'Borrar archivo físico del disco',
                             style: AuraTypography.bodyMedium
-                                .copyWith(color: textPrimary),
+                                .copyWith(color: tokens.textPrimary),
                           ),
                         ),
                       ],
@@ -104,12 +106,13 @@ class CompletedTaskCard extends StatelessWidget {
                   onPressed: () => Navigator.pop(ctx),
                   child: Text(
                     'Cancelar',
-                    style: AuraTypography.label.copyWith(color: textSecondary),
+                    style: AuraTypography.label
+                        .copyWith(color: tokens.textSecondary),
                   ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: errColor,
+                    backgroundColor: tokens.error,
                     foregroundColor: AuraColors.white,
                     minimumSize: const Size(110, 42),
                     shape: const RoundedRectangleBorder(
@@ -122,7 +125,8 @@ class CompletedTaskCard extends StatelessWidget {
                   },
                   child: Text(
                     'Eliminar',
-                    style: AuraTypography.label.copyWith(color: AuraColors.white),
+                    style:
+                        AuraTypography.label.copyWith(color: AuraColors.white),
                   ),
                 ),
               ],
@@ -135,15 +139,9 @@ class CompletedTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = AuraThemeTokens.of(context);
     final isAudio = task.mediaType == MediaType.audio;
-    final formatColor =
-        isAudio ? AuraColors.audio(isDark) : AuraColors.video(isDark);
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
-    final divider = AuraColors.divider(isDark);
-    final primary = AuraColors.primary(isDark);
-    final errColor = AuraColors.error(isDark);
+    final formatColor = isAudio ? tokens.audio : tokens.video;
 
     final dateFormat = DateFormat('dd/MM/yyyy HH:mm');
     final formattedDate = task.completedAt != null
@@ -196,7 +194,7 @@ class CompletedTaskCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: AuraTypography.label.copyWith(
                         fontSize: 15,
-                        color: textPrimary,
+                        color: tokens.textPrimary,
                       ),
                     ),
                     const SizedBox(height: AuraDimensions.space1),
@@ -225,7 +223,7 @@ class CompletedTaskCard extends StatelessWidget {
                         Text(
                           '${Formatters.formatBytes(task.downloadedBytes)} · $formattedDate',
                           style: AuraTypography.metricSmall.copyWith(
-                            color: textSecondary,
+                            color: tokens.textSecondary,
                           ),
                         ),
                       ],
@@ -236,39 +234,47 @@ class CompletedTaskCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AuraDimensions.space3),
-          Divider(height: 1, color: divider),
+          Divider(height: 1, color: tokens.divider),
           const SizedBox(height: AuraDimensions.space3),
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
-                  icon: Icon(
-                    Icons.play_arrow_rounded,
-                    size: 18,
-                    color: formatColor,
-                  ),
-                  label: Text(
-                    'Reproducir',
-                    style: AuraTypography.label.copyWith(color: textPrimary),
-                  ),
+                child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(0, 44),
-                    side: BorderSide(color: divider),
+                    side: BorderSide(color: tokens.divider),
                     shape: const RoundedRectangleBorder(
                       borderRadius: AuraDimensions.radiusMedium,
                     ),
                   ),
                   onPressed: () => _openFile(context),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.play_arrow_rounded,
+                        size: 18,
+                        color: formatColor,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Reproducir',
+                        style: AuraTypography.label
+                            .copyWith(color: tokens.textPrimary),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(width: AuraDimensions.space2),
               IconButton(
-                icon: Icon(Icons.share_rounded, color: primary, size: 20),
+                icon: Icon(Icons.share_rounded, color: tokens.primary, size: 20),
                 onPressed: _shareFile,
                 tooltip: 'Compartir',
                 style: IconButton.styleFrom(
                   minimumSize: const Size(44, 44),
-                  backgroundColor: primary.withValues(alpha: 0.12),
+                  backgroundColor: tokens.primary.withValues(alpha: 0.12),
                   shape: const RoundedRectangleBorder(
                     borderRadius: AuraDimensions.radiusMedium,
                   ),
@@ -278,14 +284,14 @@ class CompletedTaskCard extends StatelessWidget {
               IconButton(
                 icon: Icon(
                   Icons.delete_outline_rounded,
-                  color: errColor,
+                  color: tokens.error,
                   size: 20,
                 ),
                 onPressed: () => _showDeleteDialog(context),
                 tooltip: 'Eliminar',
                 style: IconButton.styleFrom(
                   minimumSize: const Size(44, 44),
-                  backgroundColor: errColor.withValues(alpha: 0.12),
+                  backgroundColor: tokens.error.withValues(alpha: 0.12),
                   shape: const RoundedRectangleBorder(
                     borderRadius: AuraDimensions.radiusMedium,
                   ),

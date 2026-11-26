@@ -41,21 +41,23 @@
 * **Rutas independientes** para **Audio** (`Download/AuraMedia/Audio` por defecto) y **Video** (`Download/AuraMedia/Video` por defecto) configurables mediante el selector nativo de carpetas de Android (`ACTION_OPEN_DOCUMENT_TREE`).
 * Descargas temporales aisladas en caché (`getTemporaryDirectory`) para no dejar archivos `.tmp` incompletos en tus carpetas finales.
 * Política configurable ante duplicados (**Renombrar `(1)`** o **Sobrescribir**), opción para incluir el nombre del autor/canal (`Autor - Título`) e indexado automático en **Galería y reproductores de música** (`MediaScannerConnection`).
+* **Reproductor preferido por formato:** selecciona qué aplicación instalada en tu Android (p. ej. **Musicolet**, **VLC** o reproductor del sistema) abre tus archivos de **Audio** y **Video** mediante `FileProvider`.
 
 ### 🔄 Cola persistente en segundo plano
 * Ejecución aislada en el `ForegroundService` de Android (`flutter_foreground_task`) con persistencia local (`TaskPersistenceService`): **las descargas siguen activas incluso si cierras el modal rápido o la app principal**.
 * Controles individuales para **pausar, reanudar, cancelar y reintentar**, límite configurable de descargas simultáneas (`1`–`4`), notificaciones con progreso en tiempo real y modo **Solo descargar con Wi-Fi**.
 
-### 🎨 Sistema de diseño Aura Core 1.0
-* **Material 3** con soporte completo para tema **Sistema**, **Oscuro** (Grafito `#101210` + Lima `#C1F36B`) y **Claro** (`#F5F7F1` + `#527B13`).
-* Distinción cromática consistente entre **Audio (verde `#80DB78` / `#26834B`)** y **Video (violeta azulado `#A5B4FC` / `#555FC1`)**.
+### 🎨 Sistema de diseño Aura Core y personalización total
+* **Material 3** con soporte para tema **Sistema**, **Oscuro** neutro (`#0E0E11`), **AMOLED negro puro** (`#000000`) y **Claro** (`#F5F6F8`), además de interruptor para **Reducir animaciones**.
+* **Colores globales y logo dinámico:** 9 acentos curados (*Lima, Esmeralda, Cian, Azul, Violeta, Rosa, Carmesí, Ámbar y Monocromo*) que recoloran en vivo botones, controles y las capas 3D del logo `AuraLogo`.
+* Distinción cromática consistente entre **Audio (`#4ADE80` / `#16A34A`)** y **Video (`#818CF8` / `#4F46E5`)**.
 * Tipografías empaquetadas localmente en `assets/google_fonts/` para uso sin conexión: **Plus Jakarta Sans** (títulos), **Inter** (interfaz) y **JetBrains Mono** (velocidades, porcentajes, ETA y tamaños).
 
 ---
 
 ## 📱 Descarga e instalación (APK)
 
-1. Ve a la sección de [**Releases**](https://github.com/TheWiche/aura-media/releases/latest) y descarga **`aura_v1.3.0_arm64.apk`** (optimizado para dispositivos Android ARM64 modernos).
+1. Ve a la sección de [**Releases**](https://github.com/TheWiche/aura-media/releases/latest) y descarga **`aura_v1.4.0_arm64.apk`** (optimizado para dispositivos Android ARM64 modernos).
 2. Instala el APK en tu dispositivo Android.
 3. En **Ajustes** dentro de la app podrás conceder:
    * **Permiso de almacenamiento / Acceso a todos los archivos** (necesario en Android 11+ si deseas guardar en carpetas personalizadas como `Music/` o `Movies/`).
@@ -71,18 +73,18 @@ lib/
 │   ├── constants/              # Constantes globales y claves de preferencias
 │   ├── services/               # Settings, Storage, Permissions, Notifications,
 │   │                           # BackgroundService (TaskHandler), NativeBridge,
-│   │                           # TaskPersistence y ShareIntent
-│   ├── theme/                  # Aura Core 1.0 (aura_colors, aura_typography,
-│   │                           # aura_dimensions, aura_theme)
+│   │                           # MediaOpener, TaskPersistence y ShareIntent
+│   ├── theme/                  # Aura Core (aura_colors, aura_typography,
+│   │                           # aura_dimensions, aura_theme, AuraAccentPreset)
 │   └── utils/                  # Formateadores de bytes, velocidad, ETA y nombres
 ├── features/
 │   ├── downloader/             # Extractores (YouTube/Web), modelos, BLoC, cola y
 │   │                           # pantallas Descargar / Cola / Completados
-│   ├── settings/               # Pantalla integral de Ajustes
+│   ├── settings/               # Pantalla integral de Ajustes (temas, reproductores)
 │   └── share_modal/            # Entrypoint y UI del modal rápido translúcido
 ├── shared/
 │   ├── navigation/             # AuraBottomNavigation
-│   └── widgets/                # AuraButton, AuraCard, AuraProgress,
+│   └── widgets/                # AuraLogo, AuraButton, AuraCard, AuraProgress,
 │                               # AuraFormatSelector, AuraDownloadCard
 └── main.dart                   # Entrypoints main() y shareModalMain()
 
@@ -90,7 +92,7 @@ android/app/src/main/kotlin/com/mediasdownload/medias_download/
 ├── AuraApplication.kt          # FlutterEngineGroup y registro de plugins en segundo plano
 ├── MainActivity.kt             # Activity principal de la app
 ├── ShareModalActivity.kt       # Activity translúcida exclusiva para ACTION_SEND
-└── NativeBridge.kt             # MediaExtractor/Muxer, DocumentTree, MediaScanner, Wi-Fi
+└── NativeBridge.kt             # MediaExtractor/Muxer, FileProvider, Players, DocumentTree, MediaScanner, Wi-Fi
 ```
 
 ---
@@ -111,7 +113,7 @@ flutter pub get
 # Análisis estático
 flutter analyze
 
-# Ejecutar suite de pruebas (23 tests unitarios y de widgets)
+# Ejecutar suite de pruebas (27 tests unitarios y de widgets)
 flutter test
 
 # Compilar APK de producción para ARM64
@@ -126,6 +128,7 @@ flutter build apk --release --target-platform android-arm64
 
 La suite en [`test/`](test/) cubre:
 * [`aura_design_system_test.dart`](test/aura_design_system_test.dart): tokens de `AuraColors`, temas `AuraTheme.dark` / `light` y componentes `AuraButton`, `AuraFormatSelector`, `AuraDownloadCard` y `AuraBottomNavigation`.
+* [`aura_customization_test.dart`](test/aura_customization_test.dart): modo AMOLED + acentos globales (`AuraThemeTokens`), tinte dinámico de `AuraLogo`, centrado horizontal de `Solo Audio` / `Video` y persistencia de reproductores/animaciones en `SettingsService`.
 * [`settings_storage_and_modal_test.dart`](test/settings_storage_and_modal_test.dart): persistencia de ajustes, carpetas separadas MP3/MP4, política de duplicados, serialización de `DownloadTask` y flujo completo de `ShareModalScreen`.
 * [`extraction_and_queue_test.dart`](test/extraction_and_queue_test.dart) y [`live_extraction_verification_test.dart`](test/live_extraction_verification_test.dart): detección y limpieza de URLs, formateadores y ciclo de vida de `DownloadQueueManager`.
 * [`widget_test.dart`](test/widget_test.dart): smoke test de arranque completo de `AuraApp`.

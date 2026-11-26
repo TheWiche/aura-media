@@ -1,8 +1,21 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
+import '../../features/downloader/data/models/download_task.dart';
+
+class InstalledMediaPlayer {
+  final String packageName;
+  final String appName;
+  final Uint8List? iconBytes;
+
+  const InstalledMediaPlayer({
+    required this.packageName,
+    required this.appName,
+    this.iconBytes,
+  });
+}
 
 /// NativePlatformService — unified bridge to Android-specific capabilities
-/// (directory picker, MediaScanner, Wi-Fi detection, share modal lifecycle, app version).
+/// (directory picker, installed media players, MediaScanner, Wi-Fi detection, share modal).
 class NativePlatformService {
   NativePlatformService._();
   static final NativePlatformService instance = NativePlatformService._();
@@ -10,6 +23,7 @@ class NativePlatformService {
   static const MethodChannel _channel = MethodChannel('com.mediasdownload/native');
 
   void Function(String sharedText)? _onNewShareCallback;
+  void Function(String url)? _onNewOpenMainUrlCallback;
   bool _handlerRegistered = false;
 
   void _ensureMethodCallHandler() {
@@ -30,8 +44,6 @@ class NativePlatformService {
     });
   }
 
-  void Function(String url)? _onNewOpenMainUrlCallback;
-
   /// Listen for subsequent share intents delivered to ShareModalActivity via onNewIntent.
   void setNewShareHandler(void Function(String sharedText) callback) {
     _onNewShareCallback = callback;
@@ -44,8 +56,7 @@ class NativePlatformService {
     _ensureMethodCallHandler();
   }
 
-  /// Opens Android's native directory picker (`ACTION_OPEN_DOCUMENT_TREE`)
-  /// and resolves it to a writable filesystem path when possible.
+  /// Opens Android's native directory picker (`ACTION_OPEN_DOCUMENT_TREE`).
   Future<String?> pickDirectory() async {
     if (!Platform.isAndroid) return null;
     try {
@@ -55,8 +66,63 @@ class NativePlatformService {
     }
   }
 
-  /// Notifies Android's MediaScanner so new audio/video files appear immediately
-  /// in music players and gallery apps.
+  /// Queries installed Android apps capable of playing audio or video files.
+  Future<List<InstalledMediaPlayer>> getInstalledMediaPlayers(
+    MediaType mediaType,
+  ) async {
+    if (!Platform.isAndroid) return const [];
+    try {
+      final raw = await _channel.invokeMethod<List<dynamic>>(
+        'getInstalledMediaPlayers',
+        {'mediaType': mediaType == MediaType.audio ? 'audio' : 'video'},
+      );
+      if (raw == null) return const [];
+
+      final list = <InstalledMediaPlayer>[];
+      for (final item in raw) {
+        if (item is Map) {
+          final pkg = item['packageName'] as String? ?? '';
+          final name = item['appName'] as String? ?? '';
+          final rawBytes = item['iconBytes'];
+          final Uint8List? icon =
+              (rawBytes is Uint8List && rawBytes.isNotEmpty) ? rawBytes : null;
+          if (pkg.isNotEmpty && name.isNotEmpty) {
+            list.add(
+              InstalledMediaPlayer(
+                packageName: pkg,
+                appName: name,
+                iconBytes: icon,
+              ),
+            );
+          }
+        }
+      }
+      return list;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Opens a media file using a specific Android package (via FileProvider) or fails cleanly.
+  Future<bool> openMediaFile(
+    String path, {
+    required String mimeType,
+    String? packageName,
+  }) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('openMediaFile', {
+        'path': path,
+        'mimeType': mimeType,
+        'packageName': packageName,
+      });
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Notifies Android's MediaScanner so new audio/video files appear immediately.
   Future<bool> scanMediaFile(String path, {String? mimeType}) async {
     if (!Platform.isAndroid) return false;
     try {
@@ -70,8 +136,7 @@ class NativePlatformService {
     }
   }
 
-  /// Returns true if the device currently has an active Wi-Fi (or Ethernet) connection.
-  /// Returns true on non-Android platforms or if plugin unavailable.
+  /// Returns true if the device currently has an active Wi-Fi or Ethernet connection.
   Future<bool> isWifiConnected() async {
     if (!Platform.isAndroid) return true;
     try {
@@ -84,12 +149,12 @@ class NativePlatformService {
 
   /// Reads versionName+versionCode from Android PackageInfo.
   Future<String> getAppVersion() async {
-    if (!Platform.isAndroid) return '1.3.0+10';
+    if (!Platform.isAndroid) return '1.4.0+11';
     try {
       final version = await _channel.invokeMethod<String>('getAppVersion');
-      return (version != null && version.isNotEmpty) ? version : '1.3.0+10';
+      return (version != null && version.isNotEmpty) ? version : '1.4.0+11';
     } catch (_) {
-      return '1.3.0+10';
+      return '1.4.0+11';
     }
   }
 
@@ -114,7 +179,7 @@ class NativePlatformService {
     }
   }
 
-  /// Closes ShareModalActivity and returns the user cleanly to the source app (e.g. YouTube).
+  /// Closes ShareModalActivity and returns cleanly to the source app.
   Future<void> closeShareModal() async {
     if (!Platform.isAndroid) return;
     try {
@@ -122,7 +187,7 @@ class NativePlatformService {
     } catch (_) {}
   }
 
-  /// Opens MainActivity (full app), optionally passing a URL to pre-fill.
+  /// Opens MainActivity, optionally passing a URL to pre-fill.
   Future<void> openMainApp({String? url}) async {
     if (!Platform.isAndroid) return;
     try {

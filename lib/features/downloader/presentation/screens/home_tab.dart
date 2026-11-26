@@ -110,13 +110,13 @@ class HomeTabState extends State<HomeTab> {
     _urlController.clear();
     context.read<DownloadBloc>().add(const ClearMetadataEvent());
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = AuraThemeTokens.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           '¡Añadido a la cola de descargas!',
           style: AuraTypography.bodyMedium.copyWith(
-            color: AuraColors.textPrimary(isDark),
+            color: tokens.textPrimary,
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -127,11 +127,7 @@ class HomeTabState extends State<HomeTab> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
-    final primary = AuraColors.primary(isDark);
-    final divider = AuraColors.divider(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -145,30 +141,29 @@ class HomeTabState extends State<HomeTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── Hero header ────────────────────────────────────────────────
               Text(
                 'Descargar contenido',
-                style: AuraTypography.headingLarge.copyWith(color: textPrimary),
+                style: AuraTypography.headingLarge
+                    .copyWith(color: tokens.textPrimary),
               ),
               const SizedBox(height: AuraDimensions.space2),
               Text(
                 'Pega un enlace de YouTube o comparte directamente desde la app para descargar audio o video.',
                 style: AuraTypography.bodyMedium.copyWith(
-                  color: textSecondary,
+                  color: tokens.textSecondary,
                   height: 1.45,
                 ),
               ),
               const SizedBox(height: AuraDimensions.space6),
 
-              // ── URL Input (54dp height, 14dp radius) ──────────────────────
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
+              Container(
                 height: AuraDimensions.inputHeight,
                 decoration: BoxDecoration(
-                  color: AuraColors.card(isDark),
+                  color: tokens.card,
                   borderRadius: AuraDimensions.radiusMedium,
                   border: Border.all(
-                    color: state.isLoadingMetadata ? primary : divider,
+                    color:
+                        state.isLoadingMetadata ? tokens.primary : tokens.divider,
                     width: state.isLoadingMetadata ? 1.5 : 1,
                   ),
                 ),
@@ -179,7 +174,9 @@ class HomeTabState extends State<HomeTab> {
                   children: [
                     Icon(
                       Icons.link_rounded,
-                      color: state.isLoadingMetadata ? primary : textSecondary,
+                      color: state.isLoadingMetadata
+                          ? tokens.primary
+                          : tokens.textSecondary,
                       size: 22,
                     ),
                     const SizedBox(width: AuraDimensions.space3),
@@ -187,12 +184,12 @@ class HomeTabState extends State<HomeTab> {
                       child: TextField(
                         controller: _urlController,
                         style: AuraTypography.bodyMedium.copyWith(
-                          color: textPrimary,
+                          color: tokens.textPrimary,
                         ),
                         decoration: InputDecoration(
                           hintText: 'https://youtube.com/watch?v=...',
                           hintStyle: AuraTypography.bodyMedium.copyWith(
-                            color: textSecondary,
+                            color: tokens.textSecondary,
                           ),
                           filled: false,
                           border: InputBorder.none,
@@ -219,19 +216,18 @@ class HomeTabState extends State<HomeTab> {
                           child: Icon(
                             Icons.close_rounded,
                             size: 18,
-                            color: textSecondary,
+                            color: tokens.textSecondary,
                           ),
                         ),
                       ),
                     const SizedBox(width: AuraDimensions.space1),
-                    _PastePill(onTap: _pasteFromClipboard),
+                    _PastePill(onTap: _pasteFromClipboard, tokens: tokens),
                   ],
                 ),
               ),
 
               const SizedBox(height: AuraDimensions.space3),
 
-              // ── Secondary analyze button (NOT lime, per rule 7A) ──────────
               AuraButton(
                 label: state.isLoadingMetadata
                     ? 'Analizando enlace...'
@@ -242,23 +238,22 @@ class HomeTabState extends State<HomeTab> {
                 onPressed: state.isLoadingMetadata ? null : _fetchMetadata,
               ),
 
-              // ── Error banner ───────────────────────────────────────────────
               if (state.metadataError != null) ...[
                 const SizedBox(height: AuraDimensions.space4),
                 Container(
                   padding: const EdgeInsets.all(AuraDimensions.space4),
                   decoration: BoxDecoration(
-                    color: AuraColors.error(isDark).withValues(alpha: 0.1),
+                    color: tokens.error.withValues(alpha: 0.1),
                     borderRadius: AuraDimensions.radiusMedium,
                     border: Border.all(
-                      color: AuraColors.error(isDark).withValues(alpha: 0.3),
+                      color: tokens.error.withValues(alpha: 0.3),
                     ),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         Icons.wifi_off_rounded,
-                        color: AuraColors.error(isDark),
+                        color: tokens.error,
                         size: AuraDimensions.smallIconSize,
                       ),
                       const SizedBox(width: AuraDimensions.space3),
@@ -266,7 +261,7 @@ class HomeTabState extends State<HomeTab> {
                         child: Text(
                           state.metadataError!,
                           style: AuraTypography.bodySmall.copyWith(
-                            color: AuraColors.error(isDark),
+                            color: tokens.error,
                             height: 1.4,
                           ),
                         ),
@@ -276,7 +271,6 @@ class HomeTabState extends State<HomeTab> {
                 ),
               ],
 
-              // ── Preview card ───────────────────────────────────────────────
               if (state.previewMetadata != null) ...[
                 const SizedBox(height: AuraDimensions.space5),
                 MediaPreviewCard(
@@ -291,7 +285,6 @@ class HomeTabState extends State<HomeTab> {
 
               const SizedBox(height: AuraDimensions.space5),
 
-              // ── Format & quality selector (Audio green / Video violet) ────
               AuraFormatSelector(
                 selectedMediaType: _selectedMediaType,
                 selectedQuality: _selectedQuality,
@@ -314,7 +307,6 @@ class HomeTabState extends State<HomeTab> {
 
               const SizedBox(height: AuraDimensions.space6),
 
-              // ── Primary Lime CTA ──────────────────────────────────────────
               AuraButton(
                 label: 'Añadir a la cola de descargas',
                 icon: Icons.download_rounded,
@@ -322,11 +314,10 @@ class HomeTabState extends State<HomeTab> {
                 onPressed: hasMetadata ? () => _addToQueue(state) : null,
               ),
 
-              // ── Active downloads summary banner ───────────────────────────
               if (state.downloadingCount > 0 || state.queuedCount > 0) ...[
                 const SizedBox(height: AuraDimensions.space5),
                 AuraCard(
-                  borderColor: primary.withValues(alpha: 0.35),
+                  borderColor: tokens.primary.withValues(alpha: 0.35),
                   padding: const EdgeInsets.symmetric(
                     horizontal: AuraDimensions.space4,
                     vertical: 14,
@@ -336,7 +327,7 @@ class HomeTabState extends State<HomeTab> {
                     children: [
                       Icon(
                         Icons.downloading_rounded,
-                        color: primary,
+                        color: tokens.primary,
                         size: 22,
                       ),
                       const SizedBox(width: AuraDimensions.space3),
@@ -344,7 +335,7 @@ class HomeTabState extends State<HomeTab> {
                         child: Text(
                           '${state.downloadingCount} descargando · ${state.queuedCount} en espera',
                           style: AuraTypography.metricSmall.copyWith(
-                            color: textPrimary,
+                            color: tokens.textPrimary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -352,7 +343,7 @@ class HomeTabState extends State<HomeTab> {
                       Text(
                         'Ver cola',
                         style: AuraTypography.label.copyWith(
-                          color: primary,
+                          color: tokens.primary,
                           fontSize: 12,
                         ),
                       ),
@@ -360,7 +351,7 @@ class HomeTabState extends State<HomeTab> {
                       Icon(
                         Icons.arrow_forward_ios_rounded,
                         size: 12,
-                        color: primary,
+                        color: tokens.primary,
                       ),
                     ],
                   ),
@@ -376,15 +367,13 @@ class HomeTabState extends State<HomeTab> {
 
 class _PastePill extends StatelessWidget {
   final VoidCallback onTap;
-  const _PastePill({required this.onTap});
+  final AuraThemeTokens tokens;
+  const _PastePill({required this.onTap, required this.tokens});
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primary = AuraColors.primary(isDark);
-
     return Material(
-      color: primary.withValues(alpha: 0.14),
+      color: tokens.primary.withValues(alpha: 0.14),
       borderRadius: AuraDimensions.radiusSmall,
       child: InkWell(
         onTap: onTap,
@@ -397,7 +386,7 @@ class _PastePill extends StatelessWidget {
           child: Text(
             'Pegar',
             style: AuraTypography.label.copyWith(
-              color: primary,
+              color: tokens.primary,
               fontSize: 12,
             ),
           ),

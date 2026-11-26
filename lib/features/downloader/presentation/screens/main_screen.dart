@@ -8,6 +8,7 @@ import '../../../../core/theme/aura_colors.dart';
 import '../../../../core/theme/aura_dimensions.dart';
 import '../../../../core/theme/aura_typography.dart';
 import '../../../../shared/navigation/aura_bottom_navigation.dart';
+import '../../../../shared/widgets/aura_logo.dart';
 import '../../../settings/presentation/screens/settings_tab.dart';
 import '../bloc/download_bloc.dart';
 import '../bloc/download_event.dart';
@@ -89,8 +90,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primary = AuraColors.primary(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -115,16 +115,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             titleSpacing: AuraDimensions.space5,
             title: Row(
               children: [
-                Image.asset(
-                  'assets/icon/aura_logo.png',
-                  width: 28,
-                  height: 28,
-                ),
+                const AuraLogo(size: 28),
                 const SizedBox(width: AuraDimensions.space2),
                 Text(
                   AppConstants.appName,
                   style: AuraTypography.headingMedium.copyWith(
-                    color: AuraColors.textPrimary(isDark),
+                    color: tokens.textPrimary,
                   ),
                 ),
               ],
@@ -140,10 +136,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: primary.withValues(alpha: 0.14),
+                      color: tokens.primary.withValues(alpha: 0.14),
                       borderRadius: AuraDimensions.radiusFull,
                       border: Border.all(
-                        color: primary.withValues(alpha: 0.35),
+                        color: tokens.primary.withValues(alpha: 0.35),
                       ),
                     ),
                     child: Row(
@@ -154,14 +150,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           height: 10,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: primary,
+                            color: tokens.primary,
                           ),
                         ),
                         const SizedBox(width: 6),
                         Text(
                           '${state.downloadingCount} activas',
                           style: AuraTypography.metricSmall.copyWith(
-                            color: primary,
+                            color: tokens.primary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -175,8 +171,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 icon: Icon(
                   Icons.settings_outlined,
                   color: _currentIndex == 3
-                      ? primary
-                      : AuraColors.textSecondary(isDark),
+                      ? tokens.primary
+                      : tokens.textSecondary,
                 ),
               ),
               const SizedBox(width: AuraDimensions.space2),

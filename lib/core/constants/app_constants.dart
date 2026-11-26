@@ -1,4 +1,4 @@
-/// AppConstants — Aura Media (rebranded from Media's Download)
+/// AppConstants — Aura Media
 class AppConstants {
   static const String appName = 'Aura';
   static const String appFullName = 'Aura Media';
@@ -17,8 +17,10 @@ class AppConstants {
       'Notifications when downloads finish or fail';
 
   // Foreground Task
-  static const String foregroundNotificationTitle = 'Aura ejecutándose en segundo plano';
-  static const String foregroundNotificationBody = 'Gestionando descargas activas';
+  static const String foregroundNotificationTitle =
+      'Aura ejecutándose en segundo plano';
+  static const String foregroundNotificationBody =
+      'Gestionando descargas activas';
 
   // Download folder names
   static const String appDownloadFolderName = 'AuraMedia';
@@ -27,6 +29,14 @@ class AppConstants {
 
   // SharedPreferences keys
   static const String prefThemeMode = 'pref_theme_mode';
+  static const String prefAmoledDark = 'pref_amoled_dark';
+  static const String prefAccentPreset = 'pref_accent_preset';
+  static const String prefReduceAnimations = 'pref_reduce_animations';
+  static const String prefAudioPlayerPackage = 'pref_audio_player_package';
+  static const String prefAudioPlayerName = 'pref_audio_player_name';
+  static const String prefVideoPlayerPackage = 'pref_video_player_package';
+  static const String prefVideoPlayerName = 'pref_video_player_name';
+
   static const String prefDefaultQuality = 'pref_default_quality';
   static const String prefDefaultMediaType = 'pref_default_media_type';
   static const String prefAudioDownloadPath = 'pref_audio_download_path';

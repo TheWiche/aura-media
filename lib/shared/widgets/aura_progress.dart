@@ -16,17 +16,15 @@ class AuraProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final trackColor = AuraColors.progressTrack(isDark);
-    final fillColor = color ?? AuraColors.primary(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     return ClipRRect(
       borderRadius: AuraDimensions.radiusFull,
       child: LinearProgressIndicator(
         value: value,
         minHeight: height,
-        backgroundColor: trackColor,
-        valueColor: AlwaysStoppedAnimation<Color>(fillColor),
+        backgroundColor: tokens.progressTrack,
+        valueColor: AlwaysStoppedAnimation<Color>(color ?? tokens.primary),
       ),
     );
   }

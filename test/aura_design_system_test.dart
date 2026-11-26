@@ -13,19 +13,22 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Aura Core Design System', () {
-    test('Color tokens match Design System 1.0 specification', () {
-      expect(AuraColors.darkBackground, const Color(0xFF101210));
-      expect(AuraColors.darkSurface, const Color(0xFF191D19));
-      expect(AuraColors.darkCard, const Color(0xFF222922));
+    test('Color tokens match neutral Aura Core specification', () {
+      expect(AuraColors.darkBackground, const Color(0xFF0E0E11));
+      expect(AuraColors.darkSurface, const Color(0xFF16161B));
+      expect(AuraColors.darkCard, const Color(0xFF1E1E24));
+      expect(AuraColors.amoledBackground, const Color(0xFF000000));
+      expect(AuraColors.amoledSurface, const Color(0xFF09090B));
+      expect(AuraColors.amoledCard, const Color(0xFF121216));
       expect(AuraColors.darkPrimary, const Color(0xFFC1F36B));
-      expect(AuraColors.darkAudio, const Color(0xFF80DB78));
-      expect(AuraColors.darkVideo, const Color(0xFFA5B4FC));
+      expect(AuraColors.darkAudio, const Color(0xFF4ADE80));
+      expect(AuraColors.darkVideo, const Color(0xFF818CF8));
 
-      expect(AuraColors.lightBackground, const Color(0xFFF5F7F1));
+      expect(AuraColors.lightBackground, const Color(0xFFF5F6F8));
       expect(AuraColors.lightSurface, const Color(0xFFFFFFFF));
       expect(AuraColors.lightPrimary, const Color(0xFF527B13));
-      expect(AuraColors.lightAudio, const Color(0xFF26834B));
-      expect(AuraColors.lightVideo, const Color(0xFF555FC1));
+      expect(AuraColors.lightAudio, const Color(0xFF16A34A));
+      expect(AuraColors.lightVideo, const Color(0xFF4F46E5));
     });
 
     test('Dark & Light Material 3 themes apply Aura Core colors', () {

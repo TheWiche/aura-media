@@ -9,7 +9,7 @@ enum AuraButtonVariant {
   danger,
 }
 
-class AuraButton extends StatefulWidget {
+class AuraButton extends StatelessWidget {
   final String label;
   final IconData? icon;
   final VoidCallback? onPressed;
@@ -28,96 +28,77 @@ class AuraButton extends StatefulWidget {
   });
 
   @override
-  State<AuraButton> createState() => _AuraButtonState();
-}
-
-class _AuraButtonState extends State<AuraButton> {
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final enabled = widget.onPressed != null && !widget.isLoading;
-    final btnHeight = widget.height ?? AuraDimensions.buttonHeight;
+    final tokens = AuraThemeTokens.of(context);
+    final enabled = onPressed != null && !isLoading;
+    final btnHeight = height ?? AuraDimensions.buttonHeight;
 
-    final (Color bg, Color fg, Color? border) = switch (widget.variant) {
+    final (Color bg, Color fg, Color? border) = switch (variant) {
       AuraButtonVariant.primary => (
-          enabled ? AuraColors.primary(isDark) : AuraColors.disabled(isDark),
-          isDark
-              ? (enabled ? const Color(0xFF171D15) : AuraColors.darkTextPrimary)
-              : AuraColors.white,
+          enabled ? tokens.primary : tokens.disabled.withValues(alpha: 0.35),
+          enabled ? tokens.onPrimary : tokens.textSecondary,
           null,
         ),
       AuraButtonVariant.secondary => (
-          AuraColors.card(isDark),
-          enabled ? AuraColors.textPrimary(isDark) : AuraColors.disabled(isDark),
-          AuraColors.divider(isDark),
+          tokens.card,
+          enabled ? tokens.textPrimary : tokens.disabled,
+          tokens.divider,
         ),
       AuraButtonVariant.danger => (
-          AuraColors.error(isDark).withValues(alpha: enabled ? 0.14 : 0.06),
-          AuraColors.error(isDark),
-          AuraColors.error(isDark).withValues(alpha: 0.35),
+          tokens.error.withValues(alpha: enabled ? 0.14 : 0.06),
+          tokens.error,
+          tokens.error.withValues(alpha: 0.35),
         ),
     };
 
-    return Listener(
-      onPointerDown: enabled ? (_) => setState(() => _pressed = true) : null,
-      onPointerUp: enabled ? (_) => setState(() => _pressed = false) : null,
-      onPointerCancel: enabled ? (_) => setState(() => _pressed = false) : null,
-      child: AnimatedScale(
-        scale: _pressed ? 0.98 : 1.0,
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOut,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 180),
-          opacity: enabled || widget.isLoading ? 1.0 : 0.55,
-          child: SizedBox(
-            height: btnHeight,
-            width: double.infinity,
-            child: Material(
-              color: bg,
-              borderRadius: AuraDimensions.radiusMedium,
-              child: InkWell(
-                onTap: enabled ? widget.onPressed : null,
-                borderRadius: AuraDimensions.radiusMedium,
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: AuraDimensions.radiusMedium,
-                    border: border != null
-                        ? Border.all(color: border, width: 1)
-                        : null,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AuraDimensions.space5,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (widget.isLoading) ...[
-                        SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.2,
-                            color: fg,
-                          ),
-                        ),
-                        const SizedBox(width: AuraDimensions.space3),
-                      ] else if (widget.icon != null) ...[
-                        Icon(widget.icon, size: 20, color: fg),
-                        const SizedBox(width: AuraDimensions.space2),
-                      ],
-                      Flexible(
-                        child: Text(
-                          widget.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AuraTypography.button.copyWith(color: fg),
-                        ),
+    return SizedBox(
+      height: btnHeight,
+      width: double.infinity,
+      child: Material(
+        color: bg,
+        shape: RoundedRectangleBorder(
+          borderRadius: AuraDimensions.radiusMedium,
+          side: border != null
+              ? BorderSide(color: border, width: 1)
+              : BorderSide.none,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: enabled ? onPressed : null,
+          borderRadius: AuraDimensions.radiusMedium,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AuraDimensions.space4,
+            ),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (isLoading) ...[
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: fg,
                       ),
-                    ],
+                    ),
+                    const SizedBox(width: AuraDimensions.space3),
+                  ] else if (icon != null) ...[
+                    Icon(icon, size: 20, color: fg),
+                    const SizedBox(width: AuraDimensions.space2),
+                  ],
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: AuraTypography.button.copyWith(color: fg),
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
           ),

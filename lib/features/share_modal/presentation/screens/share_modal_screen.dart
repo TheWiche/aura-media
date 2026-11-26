@@ -14,6 +14,7 @@ import '../../../../core/theme/aura_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/aura_button.dart';
 import '../../../../shared/widgets/aura_format_selector.dart';
+import '../../../../shared/widgets/aura_logo.dart';
 import '../../../downloader/data/datasources/generic_extractor.dart';
 import '../../../downloader/data/datasources/youtube_extractor.dart';
 import '../../../downloader/data/models/download_task.dart';
@@ -26,15 +27,22 @@ class ShareModalApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final amoled = SettingsService.instance.getAmoledDark();
+    final accent = SettingsService.instance.getAccentPreset();
+    final reduceAnimations = SettingsService.instance.getReduceAnimations();
+
     return MaterialApp(
       title: 'Aura Descarga Rápida',
       debugShowCheckedModeBanner: false,
-      theme: AuraTheme.light.copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-      ),
-      darkTheme: AuraTheme.dark.copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-      ),
+      theme: AuraTheme.buildLight(
+        accent: accent,
+        reduceAnimations: reduceAnimations,
+      ).copyWith(scaffoldBackgroundColor: Colors.transparent),
+      darkTheme: AuraTheme.buildDark(
+        amoled: amoled,
+        accent: accent,
+        reduceAnimations: reduceAnimations,
+      ).copyWith(scaffoldBackgroundColor: Colors.transparent),
       themeMode: initialThemeMode,
       color: Colors.transparent,
       home: const ShareModalScreen(),
@@ -99,13 +107,14 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     _selectedMediaType = SettingsService.instance.getDefaultMediaType();
     _selectedQuality = SettingsService.instance.getDefaultQuality();
     _audioFormat = SettingsService.instance.getAudioFormat();
+    final reduceAnimations = SettingsService.instance.getReduceAnimations();
 
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
+      duration: Duration(milliseconds: reduceAnimations ? 0 : 120),
     );
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.12),
+      begin: const Offset(0, 0.08),
       end: Offset.zero,
     ).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
@@ -129,16 +138,14 @@ class _ShareModalScreenState extends State<ShareModalScreen>
 
   Future<void> _loadFolderLabels() async {
     try {
-      final audioDir = await StorageService.instance.getDownloadDirectory(
-        MediaType.audio,
-      );
-      final videoDir = await StorageService.instance.getDownloadDirectory(
-        MediaType.video,
-      );
+      final results = await Future.wait([
+        StorageService.instance.getDownloadDirectory(MediaType.audio),
+        StorageService.instance.getDownloadDirectory(MediaType.video),
+      ]);
       if (mounted) {
         setState(() {
-          _audioFolderLabel = _compactPath(audioDir.path);
-          _videoFolderLabel = _compactPath(videoDir.path);
+          _audioFolderLabel = _compactPath(results[0].path);
+          _videoFolderLabel = _compactPath(results[1].path);
         });
       }
     } catch (_) {}
@@ -326,7 +333,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
         _isSubmitting = false;
         _queuedSuccess = true;
       });
-      await Future.delayed(const Duration(milliseconds: 320));
+      await Future.delayed(const Duration(milliseconds: 220));
       await _closeModal();
     } else {
       setState(() {
@@ -341,7 +348,9 @@ class _ShareModalScreenState extends State<ShareModalScreen>
       widget.onClose!();
       return;
     }
-    await _animController.reverse();
+    if (!SettingsService.instance.getReduceAnimations()) {
+      await _animController.reverse();
+    }
     await NativePlatformService.instance.closeShareModal();
   }
 
@@ -367,14 +376,8 @@ class _ShareModalScreenState extends State<ShareModalScreen>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final modalSurface = isDark
-        ? AuraColors.darkSurface.withValues(alpha: 0.97)
-        : AuraColors.lightSurface.withValues(alpha: 0.98);
-    final cardBg = AuraColors.card(isDark);
-    final dividerColor = AuraColors.divider(isDark);
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
+    final tokens = AuraThemeTokens.of(context);
+    final modalSurface = tokens.surface.withValues(alpha: 0.97);
 
     final qualities = _metadata?.availableQualities ??
         const [
@@ -410,199 +413,174 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                 opacity: _fadeAnimation,
                 child: SlideTransition(
                   position: _slideAnimation,
-                  child: Material(
-                    color: Colors.transparent,
-                    elevation: AuraDimensions.modalElevation,
-                    borderRadius: AuraDimensions.radiusExtraLarge,
-                    child: Container(
-                      margin: const EdgeInsets.fromLTRB(10, 16, 10, 10),
-                      padding: const EdgeInsets.all(AuraDimensions.space5),
-                      decoration: BoxDecoration(
-                        color: modalSurface,
-                        borderRadius: AuraDimensions.radiusExtraLarge,
-                        border: Border.all(color: dividerColor, width: 1),
-                      ),
-                      child: _isAutoDownloading
-                          ? _buildAutoDownloadingBanner(textPrimary, isDark)
-                          : Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                // Drag handle
-                                Center(
-                                  child: Container(
-                                    width: 36,
-                                    height: 4,
-                                    margin: const EdgeInsets.only(
-                                        bottom: AuraDimensions.space3),
-                                    decoration: BoxDecoration(
-                                      color: dividerColor,
-                                      borderRadius: AuraDimensions.radiusFull,
-                                    ),
-                                  ),
-                                ),
-
-                                // Header with Aura brand mark
-                                Row(
-                                  children: [
-                                    Image.asset(
-                                      'assets/icon/aura_logo.png',
-                                      width: 26,
-                                      height: 26,
-                                    ),
-                                    const SizedBox(width: AuraDimensions.space2),
-                                    Expanded(
-                                      child: Text(
-                                        'Aura',
-                                        style: AuraTypography.headingSmall
-                                            .copyWith(color: textPrimary),
-                                      ),
-                                    ),
-                                    TextButton(
-                                      onPressed: () =>
-                                          _openInFullApp(_resolvedUrl),
-                                      style: TextButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 10, vertical: 6),
-                                        minimumSize: Size.zero,
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      child: Text(
-                                        'Abrir app',
-                                        style: AuraTypography.label.copyWith(
-                                          fontSize: 12,
-                                          color: AuraColors.primary(isDark),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: AuraDimensions.space1),
-                                    IconButton(
-                                      onPressed: _closeModal,
-                                      icon: Icon(
-                                        Icons.close_rounded,
-                                        size: AuraDimensions.smallIconSize,
-                                        color: textSecondary,
-                                      ),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(
-                                        minWidth: 32,
-                                        minHeight: 32,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                const SizedBox(height: AuraDimensions.space4),
-
-                                // Media preview (88x88 thumbnail per Section 8)
-                                if (_metadata != null)
-                                  _buildCompactPreview(
-                                    _metadata!,
-                                    cardBg,
-                                    textPrimary,
-                                    textSecondary,
-                                    dividerColor,
-                                    isDark,
-                                  )
-                                else if (_isLoadingMetadata)
-                                  _buildLoadingPreview(
-                                      cardBg, textSecondary, dividerColor, isDark)
-                                else if (_error != null)
-                                  _buildErrorBanner(isDark),
-
-                                const SizedBox(height: AuraDimensions.space4),
-
-                                // Format selector (Audio green / Video violet)
-                                AuraFormatSelector(
-                                  selectedMediaType: _selectedMediaType,
-                                  selectedQuality: effectiveQuality,
-                                  availableQualities: qualities,
-                                  audioSizeBytes: _metadata?.audioSizeBytes,
-                                  videoSizeBytes: _metadata?.videoSizeBytes,
-                                  audioExtensionLabel: audioExtUpper,
-                                  compact: true,
-                                  onMediaTypeChanged: (type) =>
-                                      setState(() => _selectedMediaType = type),
-                                  onQualityChanged: (q) =>
-                                      setState(() => _selectedQuality = q),
-                                ),
-
-                                const SizedBox(height: AuraDimensions.space4),
-
-                                // Action button
-                                if (_queuedSuccess)
-                                  Container(
-                                    height: AuraDimensions.buttonHeight,
-                                    decoration: BoxDecoration(
-                                      color: AuraColors.audio(isDark)
-                                          .withValues(alpha: 0.16),
-                                      borderRadius: AuraDimensions.radiusMedium,
-                                      border: Border.all(
-                                        color: AuraColors.audio(isDark)
-                                            .withValues(alpha: 0.45),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.check_circle_rounded,
-                                          color: AuraColors.audio(isDark),
-                                          size: 20,
-                                        ),
-                                        const SizedBox(
-                                            width: AuraDimensions.space2),
-                                        Text(
-                                          '¡Descarga iniciada en segundo plano!',
-                                          style: AuraTypography.button.copyWith(
-                                            color: AuraColors.audio(isDark),
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  )
-                                else
-                                  AuraButton(
-                                    label: _isSubmitting
-                                        ? 'Preparando descarga...'
-                                        : buttonLabel,
-                                    icon: Icons.download_rounded,
-                                    isLoading: _isSubmitting,
-                                    onPressed: _resolvedUrl == null
-                                        ? null
-                                        : _handleDownloadPressed,
-                                  ),
-
-                                const SizedBox(height: AuraDimensions.space3),
-
-                                // Local destination folder footer
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.info_outline_rounded,
-                                      size: 14,
-                                      color: textSecondary,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Flexible(
-                                      child: Text(
-                                        'Guardado local · $activeFolder',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: AuraTypography.bodySmall.copyWith(
-                                          color: textSecondary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
+                  child: Container(
+                    margin: const EdgeInsets.fromLTRB(10, 16, 10, 10),
+                    padding: const EdgeInsets.all(AuraDimensions.space5),
+                    decoration: BoxDecoration(
+                      color: modalSurface,
+                      borderRadius: AuraDimensions.radiusExtraLarge,
+                      border: Border.all(color: tokens.divider, width: 1),
                     ),
+                    child: _isAutoDownloading
+                        ? _buildAutoDownloadingBanner(tokens)
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Center(
+                                child: Container(
+                                  width: 36,
+                                  height: 4,
+                                  margin: const EdgeInsets.only(
+                                      bottom: AuraDimensions.space3),
+                                  decoration: BoxDecoration(
+                                    color: tokens.divider,
+                                    borderRadius: AuraDimensions.radiusFull,
+                                  ),
+                                ),
+                              ),
+
+                              Row(
+                                children: [
+                                  const AuraLogo(size: 26),
+                                  const SizedBox(width: AuraDimensions.space2),
+                                  Expanded(
+                                    child: Text(
+                                      'Aura',
+                                      style: AuraTypography.headingSmall
+                                          .copyWith(color: tokens.textPrimary),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        _openInFullApp(_resolvedUrl),
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 6),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    child: Text(
+                                      'Abrir app',
+                                      style: AuraTypography.label.copyWith(
+                                        fontSize: 12,
+                                        color: tokens.primary,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: AuraDimensions.space1),
+                                  IconButton(
+                                    onPressed: _closeModal,
+                                    icon: Icon(
+                                      Icons.close_rounded,
+                                      size: AuraDimensions.smallIconSize,
+                                      color: tokens.textSecondary,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 32,
+                                      minHeight: 32,
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: AuraDimensions.space4),
+
+                              if (_metadata != null)
+                                _buildCompactPreview(_metadata!, tokens)
+                              else if (_isLoadingMetadata)
+                                _buildLoadingPreview(tokens)
+                              else if (_error != null)
+                                _buildErrorBanner(tokens),
+
+                              const SizedBox(height: AuraDimensions.space4),
+
+                              AuraFormatSelector(
+                                selectedMediaType: _selectedMediaType,
+                                selectedQuality: effectiveQuality,
+                                availableQualities: qualities,
+                                audioSizeBytes: _metadata?.audioSizeBytes,
+                                videoSizeBytes: _metadata?.videoSizeBytes,
+                                audioExtensionLabel: audioExtUpper,
+                                compact: true,
+                                onMediaTypeChanged: (type) =>
+                                    setState(() => _selectedMediaType = type),
+                                onQualityChanged: (q) =>
+                                    setState(() => _selectedQuality = q),
+                              ),
+
+                              const SizedBox(height: AuraDimensions.space4),
+
+                              if (_queuedSuccess)
+                                Container(
+                                  height: AuraDimensions.buttonHeight,
+                                  decoration: BoxDecoration(
+                                    color: tokens.audio.withValues(alpha: 0.16),
+                                    borderRadius: AuraDimensions.radiusMedium,
+                                    border: Border.all(
+                                      color:
+                                          tokens.audio.withValues(alpha: 0.45),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.check_circle_rounded,
+                                        color: tokens.audio,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(
+                                          width: AuraDimensions.space2),
+                                      Text(
+                                        '¡Descarga iniciada en segundo plano!',
+                                        style: AuraTypography.button.copyWith(
+                                          color: tokens.audio,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              else
+                                AuraButton(
+                                  label: _isSubmitting
+                                      ? 'Preparando descarga...'
+                                      : buttonLabel,
+                                  icon: Icons.download_rounded,
+                                  isLoading: _isSubmitting,
+                                  onPressed: _resolvedUrl == null
+                                      ? null
+                                      : _handleDownloadPressed,
+                                ),
+
+                              const SizedBox(height: AuraDimensions.space3),
+
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.info_outline_rounded,
+                                    size: 14,
+                                    color: tokens.textSecondary,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      'Guardado local · $activeFolder',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: AuraTypography.bodySmall.copyWith(
+                                        color: tokens.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               ),
@@ -613,7 +591,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     );
   }
 
-  Widget _buildAutoDownloadingBanner(Color textPrimary, bool isDark) {
+  Widget _buildAutoDownloadingBanner(AuraThemeTokens tokens) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AuraDimensions.space3),
       child: Row(
@@ -623,7 +601,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
             height: 22,
             child: CircularProgressIndicator(
               strokeWidth: 2.5,
-              color: AuraColors.primary(isDark),
+              color: tokens.primary,
             ),
           ),
           const SizedBox(width: AuraDimensions.space3),
@@ -634,7 +612,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                   : 'Iniciando descarga automática...',
               style: AuraTypography.label.copyWith(
                 fontSize: 14,
-                color: textPrimary,
+                color: tokens.textPrimary,
               ),
             ),
           ),
@@ -643,20 +621,13 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     );
   }
 
-  Widget _buildCompactPreview(
-    MediaMetadata meta,
-    Color cardBg,
-    Color textPrimary,
-    Color textSecondary,
-    Color dividerColor,
-    bool isDark,
-  ) {
+  Widget _buildCompactPreview(MediaMetadata meta, AuraThemeTokens tokens) {
     return Container(
       padding: const EdgeInsets.all(AuraDimensions.space3),
       decoration: BoxDecoration(
-        color: cardBg,
+        color: tokens.card,
         borderRadius: AuraDimensions.radiusLarge,
-        border: Border.all(color: dividerColor, width: 1),
+        border: Border.all(color: tokens.divider, width: 1),
       ),
       child: Row(
         children: [
@@ -665,20 +636,20 @@ class _ShareModalScreenState extends State<ShareModalScreen>
             child: Container(
               width: 88,
               height: 88,
-              color: AuraColors.primary(isDark).withValues(alpha: 0.12),
+              color: tokens.primary.withValues(alpha: 0.12),
               child: meta.thumbnailUrl != null
                   ? Image.network(
                       meta.thumbnailUrl!,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => Icon(
                         Icons.play_circle_outline_rounded,
-                        color: AuraColors.primary(isDark),
+                        color: tokens.primary,
                         size: 30,
                       ),
                     )
                   : Icon(
                       Icons.play_circle_outline_rounded,
-                      color: AuraColors.primary(isDark),
+                      color: tokens.primary,
                       size: 30,
                     ),
             ),
@@ -694,7 +665,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                   overflow: TextOverflow.ellipsis,
                   style: AuraTypography.headingSmall.copyWith(
                     fontSize: 15,
-                    color: textPrimary,
+                    color: tokens.textPrimary,
                     height: 1.25,
                   ),
                 ),
@@ -704,7 +675,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AuraTypography.bodySmall.copyWith(
-                    color: textSecondary,
+                    color: tokens.textSecondary,
                   ),
                 ),
                 const SizedBox(height: AuraDimensions.space2),
@@ -714,13 +685,13 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                       Icon(
                         Icons.play_arrow_rounded,
                         size: 14,
-                        color: textSecondary,
+                        color: tokens.textSecondary,
                       ),
                       const SizedBox(width: 3),
                       Text(
                         Formatters.formatDuration(meta.duration!),
                         style: AuraTypography.metricSmall.copyWith(
-                          color: textSecondary,
+                          color: tokens.textSecondary,
                         ),
                       ),
                       const SizedBox(width: AuraDimensions.space2),
@@ -731,8 +702,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: AuraColors.primary(isDark)
-                            .withValues(alpha: 0.14),
+                        color: tokens.primary.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
@@ -740,7 +710,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                         style: AuraTypography.bodySmall.copyWith(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: AuraColors.primary(isDark),
+                          color: tokens.primary,
                         ),
                       ),
                     ),
@@ -754,18 +724,13 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     );
   }
 
-  Widget _buildLoadingPreview(
-    Color cardBg,
-    Color textSecondary,
-    Color dividerColor,
-    bool isDark,
-  ) {
+  Widget _buildLoadingPreview(AuraThemeTokens tokens) {
     return Container(
       padding: const EdgeInsets.all(AuraDimensions.space4),
       decoration: BoxDecoration(
-        color: cardBg,
+        color: tokens.card,
         borderRadius: AuraDimensions.radiusLarge,
-        border: Border.all(color: dividerColor, width: 1),
+        border: Border.all(color: tokens.divider, width: 1),
       ),
       child: Row(
         children: [
@@ -774,14 +739,15 @@ class _ShareModalScreenState extends State<ShareModalScreen>
             height: 18,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: AuraColors.primary(isDark),
+              color: tokens.primary,
             ),
           ),
           const SizedBox(width: AuraDimensions.space3),
           Expanded(
             child: Text(
               'Obteniendo detalles del enlace...',
-              style: AuraTypography.bodyMedium.copyWith(color: textSecondary),
+              style: AuraTypography.bodyMedium
+                  .copyWith(color: tokens.textSecondary),
             ),
           ),
         ],
@@ -789,24 +755,23 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     );
   }
 
-  Widget _buildErrorBanner(bool isDark) {
-    final errColor = AuraColors.error(isDark);
+  Widget _buildErrorBanner(AuraThemeTokens tokens) {
     return Container(
       padding: const EdgeInsets.all(AuraDimensions.space3),
       decoration: BoxDecoration(
-        color: errColor.withValues(alpha: 0.1),
+        color: tokens.error.withValues(alpha: 0.1),
         borderRadius: AuraDimensions.radiusMedium,
-        border: Border.all(color: errColor.withValues(alpha: 0.3)),
+        border: Border.all(color: tokens.error.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          Icon(Icons.error_outline_rounded, color: errColor, size: 18),
+          Icon(Icons.error_outline_rounded, color: tokens.error, size: 18),
           const SizedBox(width: AuraDimensions.space2),
           Expanded(
             child: Text(
               _error!,
               style: AuraTypography.bodySmall.copyWith(
-                color: errColor,
+                color: tokens.error,
                 height: 1.35,
               ),
             ),
@@ -818,7 +783,7 @@ class _ShareModalScreenState extends State<ShareModalScreen>
                 'Reintentar',
                 style: AuraTypography.label.copyWith(
                   fontSize: 12,
-                  color: AuraColors.primary(isDark),
+                  color: tokens.primary,
                 ),
               ),
             ),
@@ -837,3 +802,4 @@ class _ShareModalScreenState extends State<ShareModalScreen>
     };
   }
 }
+

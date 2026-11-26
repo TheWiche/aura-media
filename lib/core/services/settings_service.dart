@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/app_constants.dart';
+import '../theme/aura_colors.dart';
 import '../../features/downloader/data/models/download_task.dart';
 
 enum ShareBehavior {
@@ -27,7 +28,7 @@ class SettingsService {
 
   SharedPreferences? _prefs;
 
-  /// Increments whenever any preference changes so listeners (e.g. HomeTab) stay synced.
+  /// Increments whenever any preference changes so listeners stay synced.
   final ValueNotifier<int> changesNotifier = ValueNotifier<int>(0);
 
   Future<void> initialize() async {
@@ -48,7 +49,7 @@ class SettingsService {
     changesNotifier.value++;
   }
 
-  // ─── Theme ─────────────────────────────────────────────────────────────────
+  // ─── Theme, AMOLED, Accent & Animations ────────────────────────────────────
 
   ThemeMode getThemeMode() {
     final raw = _pOrNull?.getString(AppConstants.prefThemeMode);
@@ -71,6 +72,102 @@ class SettingsService {
     _notifyChanged();
   }
 
+  bool getAmoledDark() {
+    return _pOrNull?.getBool(AppConstants.prefAmoledDark) ?? false;
+  }
+
+  Future<void> setAmoledDark(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefAmoledDark, value);
+    _notifyChanged();
+  }
+
+  AuraAccentPreset getAccentPreset() {
+    final raw = _pOrNull?.getString(AppConstants.prefAccentPreset);
+    return AuraAccentPreset.values.firstWhere(
+      (e) => e.name == raw,
+      orElse: () => AuraAccentPreset.lime,
+    );
+  }
+
+  Future<void> setAccentPreset(AuraAccentPreset preset) async {
+    await initialize();
+    await _prefs!.setString(AppConstants.prefAccentPreset, preset.name);
+    _notifyChanged();
+  }
+
+  bool getReduceAnimations() {
+    return _pOrNull?.getBool(AppConstants.prefReduceAnimations) ?? false;
+  }
+
+  Future<void> setReduceAnimations(bool value) async {
+    await initialize();
+    await _prefs!.setBool(AppConstants.prefReduceAnimations, value);
+    _notifyChanged();
+  }
+
+  // ─── Preferred Media Players ───────────────────────────────────────────────
+
+  String? getAudioPlayerPackage() {
+    final val = _pOrNull?.getString(AppConstants.prefAudioPlayerPackage)?.trim();
+    return (val == null || val.isEmpty) ? null : val;
+  }
+
+  String? getAudioPlayerName() {
+    final val = _pOrNull?.getString(AppConstants.prefAudioPlayerName)?.trim();
+    return (val == null || val.isEmpty) ? null : val;
+  }
+
+  Future<void> setAudioPlayer({String? packageName, String? appName}) async {
+    await initialize();
+    if (packageName == null || packageName.trim().isEmpty) {
+      await _prefs!.remove(AppConstants.prefAudioPlayerPackage);
+      await _prefs!.remove(AppConstants.prefAudioPlayerName);
+    } else {
+      await _prefs!.setString(
+        AppConstants.prefAudioPlayerPackage,
+        packageName.trim(),
+      );
+      if (appName != null && appName.trim().isNotEmpty) {
+        await _prefs!.setString(
+          AppConstants.prefAudioPlayerName,
+          appName.trim(),
+        );
+      }
+    }
+    _notifyChanged();
+  }
+
+  String? getVideoPlayerPackage() {
+    final val = _pOrNull?.getString(AppConstants.prefVideoPlayerPackage)?.trim();
+    return (val == null || val.isEmpty) ? null : val;
+  }
+
+  String? getVideoPlayerName() {
+    final val = _pOrNull?.getString(AppConstants.prefVideoPlayerName)?.trim();
+    return (val == null || val.isEmpty) ? null : val;
+  }
+
+  Future<void> setVideoPlayer({String? packageName, String? appName}) async {
+    await initialize();
+    if (packageName == null || packageName.trim().isEmpty) {
+      await _prefs!.remove(AppConstants.prefVideoPlayerPackage);
+      await _prefs!.remove(AppConstants.prefVideoPlayerName);
+    } else {
+      await _prefs!.setString(
+        AppConstants.prefVideoPlayerPackage,
+        packageName.trim(),
+      );
+      if (appName != null && appName.trim().isNotEmpty) {
+        await _prefs!.setString(
+          AppConstants.prefVideoPlayerName,
+          appName.trim(),
+        );
+      }
+    }
+    _notifyChanged();
+  }
+
   // ─── Default Format & Quality ──────────────────────────────────────────────
 
   MediaType getDefaultMediaType() {
@@ -78,7 +175,7 @@ class SettingsService {
     return switch (raw) {
       'video' => MediaType.video,
       'audio' => MediaType.audio,
-      _ => MediaType.audio, // Default: Solo Audio
+      _ => MediaType.audio,
     };
   }
 

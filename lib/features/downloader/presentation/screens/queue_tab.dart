@@ -20,11 +20,7 @@ class QueueTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
-    final primary = AuraColors.primary(isDark);
-    final audioColor = AuraColors.audio(isDark);
+    final tokens = AuraThemeTokens.of(context);
 
     return BlocBuilder<DownloadBloc, DownloadState>(
       builder: (context, state) {
@@ -32,7 +28,6 @@ class QueueTab extends StatelessWidget {
 
         return Column(
           children: [
-            // Concurrency selector header card
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AuraDimensions.space4,
@@ -50,13 +45,12 @@ class QueueTab extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
-                        color: AuraColors.secondary(isDark)
-                            .withValues(alpha: 0.15),
+                        color: tokens.primary.withValues(alpha: 0.14),
                         borderRadius: AuraDimensions.radiusSmall,
                       ),
                       child: Icon(
                         Icons.sync_alt_rounded,
-                        color: AuraColors.secondary(isDark),
+                        color: tokens.primary,
                         size: 18,
                       ),
                     ),
@@ -65,7 +59,7 @@ class QueueTab extends StatelessWidget {
                       child: Text(
                         'Límite de concurrencia',
                         style: AuraTypography.label.copyWith(
-                          color: textSecondary,
+                          color: tokens.textSecondary,
                         ),
                       ),
                     ),
@@ -75,22 +69,20 @@ class QueueTab extends StatelessWidget {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: isDark
-                            ? AuraColors.darkSurface
-                            : AuraColors.lightBackground,
+                        color: tokens.surface,
                         borderRadius: AuraDimensions.radiusSmall,
                         border: Border.all(
-                          color: AuraColors.divider(isDark),
+                          color: tokens.divider,
                           width: 1,
                         ),
                       ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<int>(
                           value: state.concurrencyLimit,
-                          dropdownColor: AuraColors.surface(isDark),
+                          dropdownColor: tokens.surface,
                           icon: Icon(
                             Icons.keyboard_arrow_down_rounded,
-                            color: primary,
+                            color: tokens.primary,
                             size: 18,
                           ),
                           isDense: true,
@@ -100,7 +92,7 @@ class QueueTab extends StatelessWidget {
                               child: Text(
                                 '$limit a la vez',
                                 style: AuraTypography.metricSmall.copyWith(
-                                  color: textPrimary,
+                                  color: tokens.textPrimary,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -121,10 +113,9 @@ class QueueTab extends StatelessWidget {
               ),
             ),
 
-            // Active queue list or empty state
             Expanded(
               child: activeList.isEmpty
-                  ? _buildEmptyState(context, isDark)
+                  ? _buildEmptyState(tokens)
                   : ListView.separated(
                       padding: const EdgeInsets.fromLTRB(
                         AuraDimensions.space4,
@@ -148,12 +139,12 @@ class QueueTab extends StatelessWidget {
                                   width: 28,
                                   height: 28,
                                   decoration: BoxDecoration(
-                                    color: audioColor.withValues(alpha: 0.16),
+                                    color: tokens.audio.withValues(alpha: 0.16),
                                     shape: BoxShape.circle,
                                   ),
                                   child: Icon(
                                     Icons.check_rounded,
-                                    color: audioColor,
+                                    color: tokens.audio,
                                     size: 16,
                                   ),
                                 ),
@@ -166,20 +157,21 @@ class QueueTab extends StatelessWidget {
                                       Text(
                                         'Descargas en segundo plano',
                                         style: AuraTypography.label.copyWith(
-                                          color: textPrimary,
+                                          color: tokens.textPrimary,
                                         ),
                                       ),
                                       Text(
                                         'Puedes seguir usando otras apps',
                                         style: AuraTypography.bodySmall
-                                            .copyWith(color: textSecondary),
+                                            .copyWith(
+                                                color: tokens.textSecondary),
                                       ),
                                     ],
                                   ),
                                 ),
                                 Icon(
                                   Icons.bolt_rounded,
-                                  color: primary,
+                                  color: tokens.primary,
                                   size: 20,
                                 ),
                               ],
@@ -226,11 +218,7 @@ class QueueTab extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context, bool isDark) {
-    final textPrimary = AuraColors.textPrimary(isDark);
-    final textSecondary = AuraColors.textSecondary(isDark);
-    final primary = AuraColors.primary(isDark);
-
+  Widget _buildEmptyState(AuraThemeTokens tokens) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: AuraDimensions.space8),
@@ -240,27 +228,28 @@ class QueueTab extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: AuraColors.card(isDark),
+                color: tokens.card,
                 shape: BoxShape.circle,
-                border: Border.all(color: AuraColors.divider(isDark)),
+                border: Border.all(color: tokens.divider),
               ),
               child: Icon(
                 Icons.check_circle_outline_rounded,
                 size: 46,
-                color: primary,
+                color: tokens.primary,
               ),
             ),
             const SizedBox(height: AuraDimensions.space5),
             Text(
               'No hay descargas en curso',
-              style: AuraTypography.headingSmall.copyWith(color: textPrimary),
+              style: AuraTypography.headingSmall
+                  .copyWith(color: tokens.textPrimary),
             ),
             const SizedBox(height: AuraDimensions.space2),
             Text(
               'Las tareas que agregues aparecerán aquí y se procesarán según el límite configurado.',
               textAlign: TextAlign.center,
               style: AuraTypography.bodySmall.copyWith(
-                color: textSecondary,
+                color: tokens.textSecondary,
                 height: 1.45,
               ),
             ),

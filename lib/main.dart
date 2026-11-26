@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:open_filex/open_filex.dart';
 import 'core/services/background_service.dart';
+import 'core/services/media_opener_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/permission_service.dart';
 import 'core/services/settings_service.dart';
+import 'core/theme/aura_colors.dart';
 import 'core/theme/aura_theme.dart';
 import 'features/downloader/presentation/bloc/download_bloc.dart';
 import 'features/downloader/presentation/screens/main_screen.dart';
@@ -18,7 +19,7 @@ void main() async {
     onNotificationResponse: (response) {
       final payload = response.payload;
       if (payload != null && payload.isNotEmpty) {
-        OpenFilex.open(payload);
+        MediaOpenerService.openFile(payload);
       }
     },
   );
@@ -26,13 +27,13 @@ void main() async {
   final launchPayload =
       await NotificationService.instance.getLaunchNotificationPayload();
   if (launchPayload != null && launchPayload.isNotEmpty) {
-    OpenFilex.open(launchPayload);
+    MediaOpenerService.openFile(launchPayload);
   }
 
   // Initialize foreground service options
   BackgroundService.instance.initialize();
 
-  // Initialize persistent settings (theme mode, folders, quality prefs)
+  // Initialize persistent settings
   await SettingsService.instance.initialize();
   await SettingsService.instance.reload();
 
@@ -51,7 +52,7 @@ void shareModalMain() async {
     onNotificationResponse: (response) {
       final payload = response.payload;
       if (payload != null && payload.isNotEmpty) {
-        OpenFilex.open(payload);
+        MediaOpenerService.openFile(payload);
       }
     },
   );
@@ -76,11 +77,36 @@ class AuraApp extends StatefulWidget {
 
 class _AuraAppState extends State<AuraApp> {
   late ThemeMode _themeMode;
+  late bool _amoledDark;
+  late AuraAccentPreset _accentPreset;
+  late bool _reduceAnimations;
 
   @override
   void initState() {
     super.initState();
     _themeMode = widget.initialThemeMode;
+    _readAppearanceFromSettings();
+    SettingsService.instance.changesNotifier.addListener(_onSettingsChanged);
+  }
+
+  void _readAppearanceFromSettings() {
+    _amoledDark = SettingsService.instance.getAmoledDark();
+    _accentPreset = SettingsService.instance.getAccentPreset();
+    _reduceAnimations = SettingsService.instance.getReduceAnimations();
+  }
+
+  void _onSettingsChanged() {
+    if (!mounted) return;
+    setState(() {
+      _themeMode = SettingsService.instance.getThemeMode();
+      _readAppearanceFromSettings();
+    });
+  }
+
+  @override
+  void dispose() {
+    SettingsService.instance.changesNotifier.removeListener(_onSettingsChanged);
+    super.dispose();
   }
 
   void _onThemeModeChanged(ThemeMode mode) {
@@ -94,8 +120,15 @@ class _AuraAppState extends State<AuraApp> {
       child: MaterialApp(
         title: 'Aura',
         debugShowCheckedModeBanner: false,
-        theme: AuraTheme.light,
-        darkTheme: AuraTheme.dark,
+        theme: AuraTheme.buildLight(
+          accent: _accentPreset,
+          reduceAnimations: _reduceAnimations,
+        ),
+        darkTheme: AuraTheme.buildDark(
+          amoled: _amoledDark,
+          accent: _accentPreset,
+          reduceAnimations: _reduceAnimations,
+        ),
         themeMode: _themeMode,
         home: MainScreen(onThemeModeChanged: _onThemeModeChanged),
       ),
