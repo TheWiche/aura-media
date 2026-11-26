@@ -462,9 +462,9 @@ class NativeBridge(
                 @Suppress("DEPRECATION")
                 pkgInfo.versionCode.toLong()
             }
-            "${pkgInfo.versionName ?: "1.5.1"}+$code"
+            "${pkgInfo.versionName ?: "1.5.2"}+$code"
         } catch (_: Exception) {
-            "1.5.1+13"
+            "1.5.2+14"
         }
     }
 

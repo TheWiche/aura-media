@@ -26,9 +26,9 @@ extension AudioFileFormatExtension on AudioFileFormat {
   String get extensionName => name; // 'mp3', 'm4a', 'webm'
 
   String get description => switch (this) {
-        AudioFileFormat.mp3 => 'Compatible universal',
-        AudioFileFormat.m4a => 'AAC nativo Apple/Android',
-        AudioFileFormat.webm => 'Opus WebM alta eficiencia',
+        AudioFileFormat.mp3 => 'Compatible en todos los reproductores',
+        AudioFileFormat.m4a => 'AAC nativo para Android e iOS',
+        AudioFileFormat.webm => 'Opus directo de YouTube (apps modernas)',
       };
 }
 
@@ -40,9 +40,9 @@ enum VideoFormatPreference {
 
 extension VideoFormatPreferenceExtension on VideoFormatPreference {
   String get label => switch (this) {
-        VideoFormatPreference.auto => 'Auto (óptimo por calidad)',
-        VideoFormatPreference.mp4 => 'MP4 (H.264 / AV1 + AAC)',
-        VideoFormatPreference.webm => 'WEBM (VP9 + Opus)',
+        VideoFormatPreference.auto => 'Auto (óptimo según resolución)',
+        VideoFormatPreference.mp4 => 'MP4 (H.264 / AV1 · más compatible)',
+        VideoFormatPreference.webm => 'WEBM (VP9 + Opus · reproductor moderno)',
       };
 
   String get shortLabel => switch (this) {

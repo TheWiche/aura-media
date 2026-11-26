@@ -60,7 +60,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   bool _storagePermissionGranted = false;
   bool _batteryOptimizationIgnored = false;
-  String _appVersion = '1.5.1+13';
+  String _appVersion = '1.5.2+14';
 
   @override
   void initState() {
@@ -698,7 +698,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   icon: Icons.video_settings_rounded,
                   iconColor: tokens.video,
                   title: 'Formato de video',
-                  subtitle: 'Códec/contenedor preferido (MP4 o WEBM VP9)',
+                  subtitle: 'MP4 más compatible o WEBM (VP9 + Opus)',
                   value: _defaultVideoFormat,
                   items: const [
                     DropdownMenuItem(
@@ -718,7 +718,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   icon: Icons.library_music_rounded,
                   iconColor: tokens.audio,
                   title: 'Formato de audio',
-                  subtitle: 'MP3 compatible, M4A AAC u OPUS WebM',
+                  subtitle: 'MP3 universal, M4A nativo u OPUS WebM',
                   value: _audioFormat,
                   items: const [
                     DropdownMenuItem(

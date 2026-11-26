@@ -168,12 +168,12 @@ class NativePlatformService {
 
   /// Reads versionName+versionCode from Android PackageInfo.
   Future<String> getAppVersion() async {
-    if (!Platform.isAndroid) return '1.5.1+13';
+    if (!Platform.isAndroid) return '1.5.2+14';
     try {
       final version = await _channel.invokeMethod<String>('getAppVersion');
-      return (version != null && version.isNotEmpty) ? version : '1.5.1+13';
+      return (version != null && version.isNotEmpty) ? version : '1.5.2+14';
     } catch (_) {
-      return '1.5.1+13';
+      return '1.5.2+14';
     }
   }
 

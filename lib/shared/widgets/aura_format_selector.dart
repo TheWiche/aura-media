@@ -174,9 +174,9 @@ class AuraFormatSelector extends StatelessWidget {
                     child: _FormatPillChip(
                       title: fmt.shortLabel,
                       subtitle: switch (fmt) {
-                        AudioFileFormat.mp3 => 'Compatible',
-                        AudioFileFormat.m4a => 'AAC Nativo',
-                        AudioFileFormat.webm => 'Opus WebM',
+                        AudioFileFormat.mp3 => 'Universal',
+                        AudioFileFormat.m4a => 'AAC nativo',
+                        AudioFileFormat.webm => 'Original WebM',
                       },
                       selected: selected,
                       accentColor: tokens.audio,
@@ -672,7 +672,7 @@ class _DetailedStreamRow extends StatelessWidget {
                     const SizedBox(height: 1),
                     Text(
                       subtitle,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: AuraTypography.bodySmall.copyWith(
                         fontSize: 11,

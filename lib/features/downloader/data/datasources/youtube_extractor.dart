@@ -1005,19 +1005,23 @@ class YoutubeExtractor {
 
       final tier = _audioTierLabel(kbps, format);
       final codecLabel = switch (format) {
-        AudioFileFormat.mp3 => 'AAC → MP3 compat.',
+        AudioFileFormat.mp3 => 'Audio MP3 compat.',
         AudioFileFormat.m4a =>
-          s.audioCodec.contains('.5') ? 'HE-AAC' : 'AAC-LC',
-        AudioFileFormat.webm => 'Opus WebM',
+          s.audioCodec.contains('.5') ? 'HE-AAC (M4A)' : 'AAC-LC (M4A)',
+        AudioFileFormat.webm => 'Opus (WebM)',
       };
       final note = switch (format) {
-        AudioFileFormat.mp3 =>
-          kbps <= 65 ? 'Ligero · compatible universal' : 'Compatible universal',
+        AudioFileFormat.mp3 => kbps <= 65
+            ? 'Peso reducido · funciona en cualquier equipo'
+            : 'Máxima compatibilidad (radios, TV y apps)',
         AudioFileFormat.m4a => kbps >= 180
-            ? 'AAC multicanal alta tasa'
-            : (kbps <= 65 ? 'Ahorro de datos' : 'Nativo iOS/Android'),
-        AudioFileFormat.webm =>
-          kbps >= 110 ? 'Máx. fidelidad por MB' : 'Ligero en Opus',
+            ? 'AAC alta tasa · ideal para equipo de audio'
+            : (kbps <= 65
+                ? 'HE-AAC compacto · ideal para voz y datos'
+                : 'Audio AAC nativo (Android, iOS y galería)'),
+        AudioFileFormat.webm => kbps >= 110
+            ? 'Audio directo de YouTube · apps modernas'
+            : 'Opus compacto · requiere app moderna',
       };
 
       audioOptions.add(
@@ -1079,12 +1083,12 @@ class YoutubeExtractor {
       if (!seenVideoKeys.add(key)) continue;
 
       final compatNote = switch (readableCodec) {
-        'H.264' => 'Máxima compatibilidad (TV, galería, redes)',
+        'H.264' => 'Compatible con galería, TV y redes sociales',
         'VP9' => height >= 1440
-            ? 'Ultra HD hasta 4K · WebM nativo'
-            : 'Alta compresión (-40% peso)',
-        'AV1' => 'Ultra ligero · Android 10+',
-        _ => 'Video adaptativo',
+            ? 'Soporta 2K/4K/HDR · reproductor moderno'
+            : 'Contenedor WebM con Opus · reproductor moderno',
+        'AV1' => 'Códec moderno · Android 10+ (menor compat. TV)',
+        _ => 'Video adaptativo en pistas separadas',
       };
 
       videoOptions.add(
@@ -1134,7 +1138,7 @@ class YoutubeExtractor {
           videoSizeBytes: m.size.totalBytes,
           audioSizeBytes: 0,
           bitrateKbps: m.bitrate.kiloBitsPerSecond.round(),
-          compatibilityNote: 'Descarga directa en 1 paso (más rápida)',
+          compatibilityNote: 'Descarga en 1 paso · listo sin combinar pistas',
         ),
       );
     }
