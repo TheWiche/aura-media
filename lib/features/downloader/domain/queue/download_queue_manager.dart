@@ -19,6 +19,7 @@ class _ActiveTaskExecution {
   http.Client? httpClient;
   String? tempPath;
   String? secondaryTempPath;
+  String? muxedTempPath;
   bool isCanceled = false;
   bool isPaused = false;
 }
@@ -180,6 +181,9 @@ class DownloadQueueManager {
       if (execution.secondaryTempPath != null) {
         await _safeDeleteFile(File(execution.secondaryTempPath!));
       }
+      if (execution.muxedTempPath != null) {
+        await _safeDeleteFile(File(execution.muxedTempPath!));
+      }
       _runningTasks.remove(taskId);
     }
 
@@ -288,7 +292,7 @@ class DownloadQueueManager {
     IOSink? sink;
     File? tempFile;
     File? secondaryAudioTempFile;
-    File? finalFile;
+    File? muxedTempFile;
 
     try {
       // Safe settings load (no-op if SettingsService not initialized in pure Dart unit tests)
@@ -331,7 +335,7 @@ class DownloadQueueManager {
       }
 
       // 1. Resolve Stream(s)
-      Stream<List<int>> primaryStream;
+      late Stream<List<int>> primaryStream;
       Stream<List<int>>? secondaryAudioStream;
       int totalBytes = task.totalBytes;
       int containerTotalBytes = task.totalBytes;
@@ -341,7 +345,9 @@ class DownloadQueueManager {
       bool requiresAudioExtraction = false;
       bool requiresVideoAudioMux = false;
 
-      if (YoutubeExtractor.isYoutubeUrl(task.url)) {
+      Future<void> bindYoutubeResolution({
+        required bool forceMuxedFallback,
+      }) async {
         final targetAudioExt = task.mediaType == MediaType.audio
             ? (task.fileExtension.isNotEmpty ? task.fileExtension : audioExtPref)
             : audioExtPref;
@@ -354,6 +360,7 @@ class DownloadQueueManager {
           videoItag: task.videoItag,
           audioItag: task.audioItag,
           audioLanguage: task.audioLanguage,
+          forceMuxedFallback: forceMuxedFallback,
         );
         primaryStream = resolved.stream;
         secondaryAudioStream = resolved.secondaryAudioStream;
@@ -364,6 +371,10 @@ class DownloadQueueManager {
         if (resolved.extension.isNotEmpty) {
           effectiveExtension = resolved.extension;
         }
+      }
+
+      if (YoutubeExtractor.isYoutubeUrl(task.url)) {
+        await bindYoutubeResolution(forceMuxedFallback: false);
       } else {
         final genericResult = await _genericExtractor.resolveStream(
           url: task.url,
@@ -389,42 +400,49 @@ class DownloadQueueManager {
         includeAuthor: includeAuthor,
       );
       final sanitizedTitle = Formatters.sanitizeFileName(baseTitle);
-      final finalFileName = '$sanitizedTitle.$effectiveExtension';
-      final finalPath = await _storageService.getTargetPath(
-        finalFileName,
-        mediaType: task.mediaType,
-        duplicatePolicy: duplicatePolicy,
-      );
-      final tempPath = await _storageService.getTempDownloadPath(
-        task.id,
-        suffix: requiresVideoAudioMux ? 'video' : null,
-      );
-      execution.tempPath = tempPath;
+      late String finalPath;
 
-      finalFile = File(finalPath);
-      tempFile = File(tempPath);
-      await _safeDeleteFile(tempFile);
-
-      if (requiresVideoAudioMux) {
-        final audioTmpPath = await _storageService.getTempDownloadPath(
+      Future<void> prepareTargetFiles() async {
+        final finalFileName = '$sanitizedTitle.$effectiveExtension';
+        finalPath = await _storageService.getTargetPath(
+          finalFileName,
+          mediaType: task.mediaType,
+          duplicatePolicy: duplicatePolicy,
+        );
+        final tempPath = await _storageService.getTempDownloadPath(
           task.id,
-          suffix: 'audio',
+          suffix: requiresVideoAudioMux ? 'video' : null,
         );
-        execution.secondaryTempPath = audioTmpPath;
-        secondaryAudioTempFile = File(audioTmpPath);
-        await _safeDeleteFile(secondaryAudioTempFile);
+        execution.tempPath = tempPath;
+
+        final localTemp = File(tempPath);
+        tempFile = localTemp;
+        await _safeDeleteFile(localTemp);
+
+        if (requiresVideoAudioMux) {
+          final audioTmpPath = await _storageService.getTempDownloadPath(
+            task.id,
+            suffix: 'audio',
+          );
+          execution.secondaryTempPath = audioTmpPath;
+          final localAudioTemp = File(audioTmpPath);
+          secondaryAudioTempFile = localAudioTemp;
+          await _safeDeleteFile(localAudioTemp);
+        }
+
+        // Update total bytes and resolved path
+        final currentIndex = _tasks.indexWhere((t) => t.id == task.id);
+        if (currentIndex >= 0) {
+          _tasks[currentIndex] = _tasks[currentIndex].copyWith(
+            totalBytes: totalBytes,
+            fileExtension: effectiveExtension,
+            savedPath: finalPath,
+          );
+          _notifyListeners();
+        }
       }
 
-      // Update total bytes and resolved path
-      final currentIndex = _tasks.indexWhere((t) => t.id == task.id);
-      if (currentIndex >= 0) {
-        _tasks[currentIndex] = _tasks[currentIndex].copyWith(
-          totalBytes: totalBytes,
-          fileExtension: effectiveExtension,
-          savedPath: finalPath,
-        );
-        _notifyListeners();
-      }
+      await prepareTargetFiles();
 
       // 3. Pipe stream(s) into temp file(s) with unified progress & speed calculation
       int cumulativeDownloaded = 0;
@@ -444,76 +462,91 @@ class DownloadQueueManager {
         int lastBytes = 0;
         DateTime lastSpeedCheck = DateTime.now();
         DateTime lastNotificationUpdate = DateTime.now();
+        bool firstChunkEmitted = false;
         double currentSpeed = 0.0;
 
-        await for (final chunk in source) {
-          if (execution.isCanceled || execution.isPaused) break;
+        try {
+          await for (final chunk in source.timeout(const Duration(seconds: 35))) {
+            if (execution.isCanceled || execution.isPaused) break;
 
-          fileSink.add(chunk);
-          downloadedBytes += chunk.length;
+            fileSink.add(chunk);
+            downloadedBytes += chunk.length;
 
-          final now = DateTime.now();
-          final speedInterval = now.difference(lastSpeedCheck).inMilliseconds;
-          if (speedInterval >= 1000) {
-            final bytesDiff = downloadedBytes - lastBytes;
-            final physicalSpeed = bytesDiff / (speedInterval / 1000);
-            currentSpeed = (physicalDenominator > 0 &&
-                    virtualTotal != physicalDenominator &&
-                    !requiresVideoAudioMux)
-                ? physicalSpeed * (virtualTotal / physicalDenominator)
-                : physicalSpeed;
-            lastBytes = downloadedBytes;
-            lastSpeedCheck = now;
-          }
+            final now = DateTime.now();
+            final speedInterval = now.difference(lastSpeedCheck).inMilliseconds;
+            if (speedInterval >= 1000) {
+              final bytesDiff = downloadedBytes - lastBytes;
+              final physicalSpeed = bytesDiff / (speedInterval / 1000);
+              currentSpeed = (physicalDenominator > 0 &&
+                      virtualTotal != physicalDenominator &&
+                      !requiresVideoAudioMux)
+                  ? physicalSpeed * (virtualTotal / physicalDenominator)
+                  : physicalSpeed;
+              lastBytes = downloadedBytes;
+              lastSpeedCheck = now;
+            }
 
-          final int reportedDownloaded;
-          if (requiresVideoAudioMux) {
-            reportedDownloaded = baseOffset + downloadedBytes;
-          } else {
-            final ratio = physicalDenominator > 0
-                ? (downloadedBytes / physicalDenominator).clamp(0.0, 1.0)
-                : 0.0;
-            reportedDownloaded = (ratio * virtualTotal).round();
-          }
-          cumulativeDownloaded = reportedDownloaded;
+            final int reportedDownloaded;
+            if (requiresVideoAudioMux) {
+              reportedDownloaded = baseOffset + downloadedBytes;
+            } else if (physicalDenominator > 0 && virtualTotal > 0) {
+              final ratio = (downloadedBytes / physicalDenominator).clamp(0.0, 1.0);
+              reportedDownloaded = (ratio * virtualTotal).round();
+            } else {
+              reportedDownloaded = downloadedBytes;
+            }
+            cumulativeDownloaded = reportedDownloaded;
 
-          if (now.difference(lastNotificationUpdate).inMilliseconds >= 350) {
-            lastNotificationUpdate = now;
-            final idx = _tasks.indexWhere((t) => t.id == task.id);
-            if (idx >= 0) {
-              _tasks[idx] = _tasks[idx].copyWith(
-                downloadedBytes: reportedDownloaded,
-                speedBytesPerSec: currentSpeed,
-              );
-              _notifyListeners();
+            if (!firstChunkEmitted ||
+                now.difference(lastNotificationUpdate).inMilliseconds >= 350) {
+              firstChunkEmitted = true;
+              lastNotificationUpdate = now;
+              final idx = _tasks.indexWhere((t) => t.id == task.id);
+              if (idx >= 0) {
+                _tasks[idx] = _tasks[idx].copyWith(
+                  downloadedBytes: reportedDownloaded,
+                  speedBytesPerSec: currentSpeed,
+                );
+                _notifyListeners();
 
-              final percent = _tasks[idx].progressPercent;
-              final speedLabel = Formatters.formatSpeed(currentSpeed);
-              final dlLabel = Formatters.formatBytes(reportedDownloaded);
-              final totLabel =
-                  totalBytes > 0 ? Formatters.formatBytes(totalBytes) : '...';
+                final percent = _tasks[idx].progressPercent;
+                final speedLabel = Formatters.formatSpeed(currentSpeed);
+                final dlLabel = Formatters.formatBytes(reportedDownloaded);
+                final totLabel =
+                    totalBytes > 0 ? Formatters.formatBytes(totalBytes) : '...';
 
-              _notificationService.showProgressNotification(
-                id: task.notificationId,
-                title: task.title,
-                progress: percent,
-                subText: '$percent% ($dlLabel / $totLabel) • $speedLabel',
-              );
+                _notificationService.showProgressNotification(
+                  id: task.notificationId,
+                  title: task.title,
+                  progress: percent,
+                  subText: '$percent% ($dlLabel / $totLabel) • $speedLabel',
+                );
+              }
             }
           }
+        } finally {
+          try {
+            await fileSink.flush();
+          } catch (_) {}
+          try {
+            await fileSink.close();
+          } catch (_) {}
+          if (identical(sink, fileSink)) sink = null;
+          if (identical(execution.sink, fileSink)) execution.sink = null;
         }
 
-        await fileSink.flush();
-        await fileSink.close();
-        sink = null;
-        execution.sink = null;
+        if (!execution.isCanceled && !execution.isPaused && downloadedBytes <= 0) {
+          throw Exception('Stream finalizado sin recibir datos (0 bytes)');
+        }
         return downloadedBytes;
       }
 
-      if (requiresVideoAudioMux && secondaryAudioStream != null && secondaryAudioTempFile != null) {
+      if (requiresVideoAudioMux &&
+          secondaryAudioStream != null &&
+          secondaryAudioTempFile != null) {
         final downloadedVideoBytes = await pipeToFile(
           primaryStream,
-          tempFile,
+          tempFile!,
           virtualTotal: totalBytes,
           physicalDenominator: containerTotalBytes,
           baseOffset: 0,
@@ -521,29 +554,61 @@ class DownloadQueueManager {
         if (execution.isCanceled || execution.isPaused) return;
 
         await pipeToFile(
-          secondaryAudioStream,
-          secondaryAudioTempFile,
+          secondaryAudioStream!,
+          secondaryAudioTempFile!,
           virtualTotal: totalBytes,
           physicalDenominator: totalBytes,
           baseOffset: downloadedVideoBytes,
         );
         if (execution.isCanceled || execution.isPaused) return;
       } else {
-        await pipeToFile(
-          primaryStream,
-          tempFile,
-          virtualTotal: totalBytes,
-          physicalDenominator: containerTotalBytes,
-          baseOffset: 0,
-        );
+        try {
+          await pipeToFile(
+            primaryStream,
+            tempFile!,
+            virtualTotal: totalBytes,
+            physicalDenominator: containerTotalBytes,
+            baseOffset: 0,
+          );
+        } catch (e) {
+          if (execution.isCanceled || execution.isPaused) return;
+          final canRetryAudioWithMuxed = YoutubeExtractor.isYoutubeUrl(task.url) &&
+              task.mediaType == MediaType.audio &&
+              !requiresAudioExtraction;
+          if (!canRetryAudioWithMuxed) rethrow;
+
+          await _safeDeleteFile(tempFile!);
+          await bindYoutubeResolution(forceMuxedFallback: true);
+          await prepareTargetFiles();
+          await pipeToFile(
+            primaryStream,
+            tempFile!,
+            virtualTotal: totalBytes,
+            physicalDenominator: containerTotalBytes,
+            baseOffset: 0,
+          );
+        }
         if (execution.isCanceled || execution.isPaused) return;
       }
 
-      // 4. Finalize: dual mux OR audio extraction OR move
+      // 4. Finalize: cache-first mux/extraction, then move or save via MediaStore
+      final mimeType = switch (effectiveExtension.toLowerCase()) {
+        'mp3' => 'audio/mpeg',
+        'm4a' => 'audio/mp4',
+        'webm' =>
+          task.mediaType == MediaType.audio ? 'audio/webm' : 'video/webm',
+        'mp4' => 'video/mp4',
+        _ => 'application/octet-stream',
+      };
+
+      late String resolvedSavedPath;
+      late int actualFinalBytes;
+      bool savedViaMediaStore = false;
+
       if (requiresVideoAudioMux &&
           secondaryAudioTempFile != null &&
-          await tempFile.exists() &&
-          await secondaryAudioTempFile.exists()) {
+          await tempFile!.exists() &&
+          await secondaryAudioTempFile!.exists()) {
         if (Platform.isAndroid) {
           _notificationService.showProgressNotification(
             id: task.notificationId,
@@ -551,62 +616,121 @@ class DownloadQueueManager {
             progress: 99,
             subText: 'Combinando video y audio...',
           );
+          final muxedPath = await _storageService.getTempDownloadPath(
+            task.id,
+            suffix: 'muxed.$effectiveExtension',
+          );
+          execution.muxedTempPath = muxedPath;
+          final muxedOut = File(muxedPath);
+          muxedTempFile = muxedOut;
+          await _safeDeleteFile(muxedOut);
+
           final muxed = await AudioExtractorService.muxVideoAndAudio(
-            videoPath: tempPath,
-            audioPath: secondaryAudioTempFile.path,
-            outputPath: finalPath,
+            videoPath: tempFile!.path,
+            audioPath: secondaryAudioTempFile!.path,
+            outputPath: muxedPath,
             containerFormat: effectiveExtension,
           );
-          if (!muxed) {
+          if (!muxed ||
+              !await muxedOut.exists() ||
+              await muxedOut.length() <= 0) {
             throw Exception(
               'No se pudo combinar video y audio en ${effectiveExtension.toUpperCase()}',
             );
           }
-          await _safeDeleteFile(tempFile);
-          await _safeDeleteFile(secondaryAudioTempFile);
-        } else {
-          await _moveFileSafely(tempFile, finalPath);
-          await _safeDeleteFile(secondaryAudioTempFile);
-        }
-      } else if (await tempFile.exists()) {
-        if (requiresAudioExtraction && Platform.isAndroid) {
-          final extracted = await AudioExtractorService.extractAudio(
-            inputPath: tempPath,
-            outputPath: finalPath,
+
+          final saved = await _saveFinalFile(
+            muxedOut,
+            finalPath: finalPath,
+            mediaType: task.mediaType,
+            mimeType: mimeType,
           );
-          if (!extracted) {
-            await _moveFileSafely(tempFile, finalPath);
-          } else {
-            await _safeDeleteFile(tempFile);
-          }
+          resolvedSavedPath = saved.savedPath;
+          actualFinalBytes = saved.fileSize;
+          savedViaMediaStore = saved.savedViaMediaStore;
+
+          await _safeDeleteFile(tempFile!);
+          await _safeDeleteFile(secondaryAudioTempFile!);
         } else {
-          if (await finalFile.exists()) {
-            await _safeDeleteFile(finalFile);
-          }
-          await _moveFileSafely(tempFile, finalPath);
+          final saved = await _saveFinalFile(
+            tempFile!,
+            finalPath: finalPath,
+            mediaType: task.mediaType,
+            mimeType: mimeType,
+          );
+          resolvedSavedPath = saved.savedPath;
+          actualFinalBytes = saved.fileSize;
+          savedViaMediaStore = saved.savedViaMediaStore;
+          await _safeDeleteFile(secondaryAudioTempFile!);
         }
+      } else if (await tempFile!.exists()) {
+        if (requiresAudioExtraction && Platform.isAndroid) {
+          _notificationService.showProgressNotification(
+            id: task.notificationId,
+            title: task.title,
+            progress: 99,
+            subText: 'Extrayendo pista de audio...',
+          );
+          final extractedPath = await _storageService.getTempDownloadPath(
+            task.id,
+            suffix: 'extracted.$effectiveExtension',
+          );
+          execution.muxedTempPath = extractedPath;
+          final extractedOut = File(extractedPath);
+          muxedTempFile = extractedOut;
+          await _safeDeleteFile(extractedOut);
+
+          final extracted = await AudioExtractorService.extractAudio(
+            inputPath: tempFile!.path,
+            outputPath: extractedPath,
+          );
+          final File sourceToSave;
+          if (extracted &&
+              await extractedOut.exists() &&
+              await extractedOut.length() > 0) {
+            sourceToSave = extractedOut;
+          } else {
+            sourceToSave = tempFile!;
+          }
+
+          final saved = await _saveFinalFile(
+            sourceToSave,
+            finalPath: finalPath,
+            mediaType: task.mediaType,
+            mimeType: mimeType,
+          );
+          resolvedSavedPath = saved.savedPath;
+          actualFinalBytes = saved.fileSize;
+          savedViaMediaStore = saved.savedViaMediaStore;
+          await _safeDeleteFile(tempFile!);
+          await _safeDeleteFile(extractedOut);
+        } else {
+          final saved = await _saveFinalFile(
+            tempFile!,
+            finalPath: finalPath,
+            mediaType: task.mediaType,
+            mimeType: mimeType,
+          );
+          resolvedSavedPath = saved.savedPath;
+          actualFinalBytes = saved.fileSize;
+          savedViaMediaStore = saved.savedViaMediaStore;
+        }
+      } else {
+        throw Exception('No se encontró el archivo descargado temporal');
       }
 
-      // 5. Notify Android MediaScanner so music players & galleries index the file
-      if (scanMedia && Platform.isAndroid) {
-        final mimeType = switch (effectiveExtension.toLowerCase()) {
-          'mp3' => 'audio/mpeg',
-          'm4a' => 'audio/mp4',
-          'webm' =>
-            task.mediaType == MediaType.audio ? 'audio/webm' : 'video/webm',
-          'mp4' => 'video/mp4',
-          _ => null,
-        };
+      // 5. Notify Android MediaScanner when saved directly via filesystem
+      if (scanMedia && Platform.isAndroid && !savedViaMediaStore) {
         await NativePlatformService.instance.scanMediaFile(
-          finalPath,
+          resolvedSavedPath,
           mimeType: mimeType,
         );
       }
 
       // 6. Mark as completed
-      final actualFinalBytes = (await finalFile.exists())
-          ? await finalFile.length()
-          : cumulativeDownloaded;
+      if (actualFinalBytes <= 0) {
+        actualFinalBytes = cumulativeDownloaded;
+      }
 
       final completedIndex = _tasks.indexWhere((t) => t.id == task.id);
       if (completedIndex >= 0) {
@@ -616,7 +740,7 @@ class DownloadQueueManager {
           totalBytes: actualFinalBytes,
           speedBytesPerSec: 0.0,
           completedAt: DateTime.now(),
-          savedPath: finalPath,
+          savedPath: resolvedSavedPath,
         );
         _notifyListeners();
       }
@@ -626,7 +750,7 @@ class DownloadQueueManager {
       await _notificationService.showCompletedNotification(
         id: task.notificationId,
         title: task.title,
-        filePath: finalPath,
+        filePath: resolvedSavedPath,
       );
 
       _processQueue();
@@ -639,10 +763,13 @@ class DownloadQueueManager {
       } catch (_) {}
 
       if (tempFile != null) {
-        await _safeDeleteFile(tempFile);
+        await _safeDeleteFile(tempFile!);
       }
       if (secondaryAudioTempFile != null) {
-        await _safeDeleteFile(secondaryAudioTempFile);
+        await _safeDeleteFile(secondaryAudioTempFile!);
+      }
+      if (muxedTempFile != null) {
+        await _safeDeleteFile(muxedTempFile);
       }
 
       final errIndex = _tasks.indexWhere((t) => t.id == task.id);
@@ -692,6 +819,72 @@ class DownloadQueueManager {
       return title;
     }
     return '$cleanAuthor - $title';
+  }
+
+  /// Saves a finished temporary file to its destination, falling back to Android MediaStore
+  /// if direct Scoped Storage filesystem writes fail.
+  Future<({String savedPath, int fileSize, bool savedViaMediaStore})>
+      _saveFinalFile(
+    File source, {
+    required String finalPath,
+    required MediaType mediaType,
+    required String mimeType,
+  }) async {
+    final sourceBytes = await source.length();
+    if (sourceBytes <= 0) {
+      throw Exception('El archivo final está vacío (0 bytes)');
+    }
+
+    final destFile = File(finalPath);
+    try {
+      if (await destFile.exists()) {
+        await _safeDeleteFile(destFile);
+      }
+      await _moveFileSafely(source, finalPath);
+      final movedSize =
+          await destFile.exists() ? await destFile.length() : sourceBytes;
+      return (
+        savedPath: finalPath,
+        fileSize: movedSize,
+        savedViaMediaStore: false,
+      );
+    } on FileSystemException {
+      if (!Platform.isAndroid) rethrow;
+      final fileName = destFile.uri.pathSegments.isNotEmpty
+          ? destFile.uri.pathSegments.last
+          : finalPath.split(RegExp(r'[/\\]')).last;
+      final relSubdir = _extractAndroidRelativeSubdir(destFile.parent.path);
+      final mediaStorePath =
+          await NativePlatformService.instance.saveToMediaStore(
+        sourcePath: source.path,
+        fileName: fileName,
+        mediaType: mediaType == MediaType.audio ? 'audio' : 'video',
+        relativeSubdir: relSubdir,
+        mimeType: mimeType,
+      );
+      if (mediaStorePath == null || mediaStorePath.isEmpty) {
+        rethrow;
+      }
+      await _safeDeleteFile(source);
+      return (
+        savedPath: mediaStorePath,
+        fileSize: sourceBytes,
+        savedViaMediaStore: true,
+      );
+    }
+  }
+
+  String? _extractAndroidRelativeSubdir(String parentPath) {
+    final normalized = parentPath.replaceAll('\\', '/');
+    const markers = ['/storage/emulated/0/', '/sdcard/'];
+    for (final marker in markers) {
+      final idx = normalized.indexOf(marker);
+      if (idx >= 0) {
+        final sub = normalized.substring(idx + marker.length).trim();
+        return sub.isEmpty ? null : sub;
+      }
+    }
+    return null;
   }
 
   /// Moves a file safely across mount points (falls back to copy+delete on EXDEV).

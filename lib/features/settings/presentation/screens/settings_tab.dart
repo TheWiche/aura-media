@@ -60,7 +60,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   bool _storagePermissionGranted = false;
   bool _batteryOptimizationIgnored = false;
-  String _appVersion = '1.5.0+12';
+  String _appVersion = '1.5.1+13';
 
   @override
   void initState() {

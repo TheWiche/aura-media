@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:medias_download/core/services/share_intent_service.dart';
 import 'package:medias_download/core/utils/formatters.dart';
 import 'package:medias_download/features/downloader/data/datasources/generic_extractor.dart';
@@ -160,6 +163,92 @@ void main() {
       expect(queueManager.currentTasks.any((t) => t.id == 'mock-task-1'), isFalse);
 
       await subscription.cancel();
+    });
+  });
+
+  group('4. AuraYoutubeHttpClient Header & VISIONOS GAPIS Regression Tests', () {
+    test('kYoutubeVisionOsClient targets GAPIS player endpoint with format v2', () {
+      expect(kYoutubeVisionOsClient.apiUrl, contains('youtubei.googleapis.com/youtubei/v1/player'));
+      expect(kYoutubeVisionOsClient.payload['context']['client']['clientName'], 'VISIONOS');
+      expect(kYoutubeVisionOsClient.headers['X-Goog-Api-Format-Version'], '2');
+    });
+
+    test('Shapes VISIONOS GAPIS player request with visitorData, cpn, t and id', () async {
+      final captured = <http.Request>[];
+      final mockRaw = MockClient((req) async {
+        if (req.url.path.contains('/visitor_id')) {
+          return http.Response(
+            jsonEncode({
+              'responseContext': {'visitorData': 'CgTestVisitor123'},
+            }),
+            200,
+          );
+        }
+        captured.add(req);
+        return http.Response('{"playabilityStatus":{"status":"OK"}}', 200);
+      });
+
+      final client = AuraYoutubeHttpClient(mockRaw);
+      try {
+        final req = http.Request('POST', Uri.parse(kYoutubeVisionOsClient.apiUrl));
+        req.body = jsonEncode({
+          ...kYoutubeVisionOsClient.payload,
+          'videoId': 'M7lc1UVf-VE',
+        });
+        await client.send(req);
+
+        expect(captured, hasLength(1));
+        final sent = captured.single;
+        expect(sent.url.queryParameters['id'], 'M7lc1UVf-VE');
+        expect(sent.url.queryParameters['t'], isNotEmpty);
+        expect(sent.headers['X-Goog-Api-Format-Version'], '2');
+        expect(sent.headers['User-Agent'], contains('com.google.visionos.youtube/'));
+
+        final sentBody = jsonDecode(sent.body) as Map<String, dynamic>;
+        expect(sentBody['cpn'], hasLength(16));
+        expect(sentBody['context']['client']['visitorData'], 'CgTestVisitor123');
+      } finally {
+        client.close();
+      }
+    });
+
+    test('Strips Chrome headers on googlevideo and appends range=0-1 + non-persistent HEAD for VISIONOS', () async {
+      final captured = <http.Request>[];
+      final mockRaw = MockClient((req) async {
+        captured.add(req);
+        return http.Response('', 200);
+      });
+
+      final client = AuraYoutubeHttpClient(mockRaw);
+      try {
+        final headReq = http.Request(
+          'HEAD',
+          Uri.parse('https://rr1---sn.googlevideo.com/videoplayback?c=VISIONOS&itag=140'),
+        );
+        headReq.headers['sec-ch-ua'] = '"Chromium";v="124"';
+        headReq.headers['cookie'] = 'CONSENT=YES+cb';
+        await client.send(headReq);
+
+        final androidGet = http.Request(
+          'GET',
+          Uri.parse('https://rr1---sn.googlevideo.com/videoplayback?c=ANDROID_VR&itag=299'),
+        );
+        androidGet.headers['sec-ch-ua'] = '"Chromium";v="124"';
+        androidGet.headers['cookie'] = 'CONSENT=YES+cb';
+        await client.send(androidGet);
+
+        expect(captured, hasLength(2));
+        expect(captured[0].url.queryParameters['range'], '0-1');
+        expect(captured[0].persistentConnection, isFalse);
+        expect(captured[0].headers['user-agent'], contains('visionos'));
+        expect(captured[0].headers.containsKey('sec-ch-ua'), isFalse);
+
+        expect(captured[1].headers['user-agent'], contains('com.google.android.youtube'));
+        expect(captured[1].headers.containsKey('sec-ch-ua'), isFalse);
+        expect(captured[1].headers.containsKey('cookie'), isFalse);
+      } finally {
+        client.close();
+      }
     });
   });
 }

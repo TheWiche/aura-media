@@ -168,12 +168,12 @@ class NativePlatformService {
 
   /// Reads versionName+versionCode from Android PackageInfo.
   Future<String> getAppVersion() async {
-    if (!Platform.isAndroid) return '1.5.0+12';
+    if (!Platform.isAndroid) return '1.5.1+13';
     try {
       final version = await _channel.invokeMethod<String>('getAppVersion');
-      return (version != null && version.isNotEmpty) ? version : '1.5.0+12';
+      return (version != null && version.isNotEmpty) ? version : '1.5.1+13';
     } catch (_) {
-      return '1.5.0+12';
+      return '1.5.1+13';
     }
   }
 
@@ -219,6 +219,28 @@ class NativePlatformService {
     if (!Platform.isAndroid) return null;
     try {
       return await _channel.invokeMethod<String>('getMainOpenUrl');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Copies a cache file via Android MediaStore when direct Scoped Storage file writes fail.
+  Future<String?> saveToMediaStore({
+    required String sourcePath,
+    required String fileName,
+    required String mediaType,
+    String? relativeSubdir,
+    required String mimeType,
+  }) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('saveToMediaStore', {
+        'sourcePath': sourcePath,
+        'fileName': fileName,
+        'mediaType': mediaType,
+        'relativeSubdir': relativeSubdir,
+        'mimeType': mimeType,
+      });
     } catch (_) {
       return null;
     }

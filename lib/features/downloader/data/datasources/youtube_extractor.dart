@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide VideoQuality;
 import '../../../../core/services/native_platform_service.dart';
@@ -8,11 +9,54 @@ import '../../../../core/services/settings_service.dart';
 import '../models/download_task.dart';
 import '../models/media_metadata.dart';
 
-/// Real mobile Chrome Android User-Agent header (Pixel 8 Pro, Chrome Mobile)
+/// Mobile browser User-Agent used solely for oEmbed / public web endpoints.
 const String kMobileUserAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240105.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
-/// Custom HTTP Client that injects mobile browser headers
+const String _kVisionOsUa =
+    'com.google.visionos.youtube/1.04(RealityDevice17,1; U; CPU visionOS 26_6_0 like Mac OS X; en)';
+const String _kYoutubeAndroidUa =
+    'com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip';
+const String _kYoutubeIosUa =
+    'com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)';
+
+/// Primary Innertube player client (visionOS over GAPIS) returning direct
+/// un-gated adaptive audio/video URLs up to 4K without PO-Token 25% cutoffs.
+const YoutubeApiClient kYoutubeVisionOsClient = YoutubeApiClient(
+  {
+    'context': {
+      'client': {
+        'clientName': 'VISIONOS',
+        'clientVersion': '1.04',
+        'clientScreen': 'WATCH',
+        'platform': 'MOBILE',
+        'deviceMake': 'Apple',
+        'deviceModel': 'RealityDevice17,1',
+        'osName': 'visionOS',
+        'osVersion': '26.6.0.23O770',
+        'hl': 'en',
+        'gl': 'US',
+        'utcOffsetMinutes': 0,
+      },
+    },
+    'contentCheckOk': true,
+    'racyCheckOk': true,
+  },
+  'https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false',
+  headers: {
+    'X-Goog-Api-Format-Version': '2',
+  },
+);
+
+String _randomIdChars(int length) {
+  const alphabet =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_';
+  final rng = Random.secure();
+  return List.generate(length, (_) => alphabet[rng.nextInt(alphabet.length)])
+      .join();
+}
+
+/// HTTP client for general/oEmbed requests.
 class MobileHttpClient extends http.BaseClient {
   final http.Client _inner;
 
@@ -21,10 +65,6 @@ class MobileHttpClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     request.headers['user-agent'] = kMobileUserAgent;
-    request.headers['sec-ch-ua'] =
-        '"Chromium";v="124", "Not-A.Brand";v="99", "Google Chrome";v="124"';
-    request.headers['sec-ch-ua-mobile'] = '?1';
-    request.headers['sec-ch-ua-platform'] = '"Android"';
     request.headers['accept-language'] = 'es-419,es;q=0.9,en-US;q=0.8,en;q=0.7';
     return _inner.send(request);
   }
@@ -36,30 +76,337 @@ class MobileHttpClient extends http.BaseClient {
   }
 }
 
-/// Custom YoutubeHttpClient subclass for YoutubeExplode
-class MobileYoutubeHttpClient extends YoutubeHttpClient {
-  MobileYoutubeHttpClient([http.Client? client])
-      : super(MobileHttpClient(client));
+/// YoutubeHttpClient tailored for `youtube_explode_dart`:
+/// 1. Preserves each Innertube client's native User-Agent instead of injecting
+///    conflicting Chrome `sec-ch-ua` headers onto Android/iOS/googlevideo URLs.
+/// 2. Overrides `getStream` with safe 4 MB chunked Range transfers (`c=ANDROID`
+///    and `c=ANDROID_VR`), per-request timeouts, and a strictly bounded 403
+///    manifest refresh (fixing infinite hang loops at ~10 MB / 26%).
+class AuraYoutubeHttpClient extends YoutubeHttpClient {
+  final http.Client _rawClient;
+  bool _isClosed = false;
+  String? _visionOsVisitorData;
+  final Map<String, String> _cpnByVideoId = {};
+
+  AuraYoutubeHttpClient([super.client]) : _rawClient = client ?? http.Client();
 
   @override
   Map<String, String> get headers => const {
-        'user-agent': kMobileUserAgent,
-        'accept':
-            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'accept-language': 'es-419,es;q=0.9,en-US;q=0.8,en;q=0.7',
-        'sec-ch-ua':
-            '"Chromium";v="124", "Not-A.Brand";v="99", "Google Chrome";v="124"',
-        'sec-ch-ua-mobile': '?1',
-        'sec-ch-ua-platform': '"Android"',
-        'cookie': 'CONSENT=YES+cb',
+        'accept-language': 'en-US,en;q=0.9',
       };
 
+  Future<String?> _ensureVisionOsVisitorData() async {
+    if (_visionOsVisitorData != null) return _visionOsVisitorData;
+    try {
+      final res = await _rawClient
+          .post(
+            Uri.parse(
+              'https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false',
+            ),
+            headers: const {
+              'Content-Type': 'application/json',
+              'User-Agent': _kVisionOsUa,
+              'X-Goog-Api-Format-Version': '2',
+            },
+            body: jsonEncode({
+              'context': kYoutubeVisionOsClient.payload['context'],
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          final vd = decoded['responseContext']?['visitorData'] as String?;
+          if (vd != null && vd.isNotEmpty) {
+            _visionOsVisitorData = vd;
+          }
+        }
+      }
+    } catch (_) {}
+    return _visionOsVisitorData;
+  }
+
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) {
-    request.headers['user-agent'] = kMobileUserAgent;
-    request.headers['sec-ch-ua-mobile'] = '?1';
-    request.headers['sec-ch-ua-platform'] = '"Android"';
-    return super.send(request);
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (_isClosed || closed) throw HttpClientClosedException();
+
+    final uri = request.url;
+
+    // Shape VISIONOS player requests to match GAPIS requirements (t, id, cpn, visitorData).
+    if (uri.host == 'youtubei.googleapis.com' &&
+        uri.path.contains('/youtubei/v1/player') &&
+        request is http.Request) {
+      try {
+        final bodyMap = jsonDecode(request.body) as Map<String, dynamic>;
+        final clientMap = (bodyMap['context'] as Map<String, dynamic>)['client']
+            as Map<String, dynamic>;
+        if (clientMap['clientName'] == 'VISIONOS') {
+          final vd = await _ensureVisionOsVisitorData();
+          if (vd != null && vd.isNotEmpty) {
+            clientMap['visitorData'] = vd;
+          }
+          final videoId = bodyMap['videoId'] as String? ?? '';
+          final cpn = _randomIdChars(16);
+          if (videoId.isNotEmpty) {
+            _cpnByVideoId[videoId] = cpn;
+          }
+          bodyMap['cpn'] = cpn;
+
+          final gapiUri = Uri.parse(
+            'https://youtubei.googleapis.com/youtubei/v1/player'
+            '?prettyPrint=false&t=${_randomIdChars(12)}&id=$videoId',
+          );
+          final rebuilt = http.Request(request.method, gapiUri);
+          rebuilt.body = jsonEncode(bodyMap);
+          rebuilt.headers['Content-Type'] = 'application/json';
+          rebuilt.headers['User-Agent'] = _kVisionOsUa;
+          rebuilt.headers['X-Goog-Api-Format-Version'] = '2';
+          return _rawClient.send(rebuilt);
+        }
+      } catch (_) {}
+    }
+
+    if (uri.host.contains('googlevideo.com')) {
+      final c = uri.queryParameters['c'] ?? '';
+      if (request.method.toUpperCase() == 'HEAD') {
+        final ranged = (c == 'VISIONOS' || c == 'IOS') &&
+                !uri.queryParameters.containsKey('range')
+            ? uri.replace(
+                queryParameters: {...uri.queryParameters, 'range': '0-1'},
+              )
+            : uri;
+        final rebuilt = http.Request('HEAD', ranged)
+          ..persistentConnection = false;
+        if (c == 'VISIONOS') {
+          rebuilt.headers['user-agent'] = _kVisionOsUa;
+        } else if (c.startsWith('ANDROID')) {
+          rebuilt.headers['user-agent'] = _kYoutubeAndroidUa;
+        } else if (c == 'IOS') {
+          rebuilt.headers['user-agent'] = _kYoutubeIosUa;
+        }
+        return _rawClient.send(rebuilt);
+      }
+
+      if (c == 'VISIONOS') {
+        request.headers['user-agent'] = _kVisionOsUa;
+      } else if (c.startsWith('ANDROID')) {
+        request.headers['user-agent'] = _kYoutubeAndroidUa;
+      } else if (c == 'IOS') {
+        request.headers['user-agent'] = _kYoutubeIosUa;
+      }
+      request.headers.remove('sec-ch-ua');
+      request.headers.remove('sec-ch-ua-mobile');
+      request.headers.remove('sec-ch-ua-platform');
+      request.headers.remove('cookie');
+    } else if (!uri.path.contains('/youtubei/') &&
+        !request.headers.containsKey('user-agent')) {
+      request.headers['user-agent'] = kMobileUserAgent;
+    }
+
+    return _rawClient.send(request);
+  }
+
+  @override
+  Stream<List<int>> getStream(
+    StreamInfo streamInfo, {
+    Map<String, String> headers = const {},
+    bool validate = true,
+    int start = 0,
+    int errorCount = 0,
+    required StreamClient streamClient,
+  }) {
+    if (streamInfo.fragments.isNotEmpty ||
+        streamInfo is HlsMuxedStreamInfo ||
+        streamInfo is HlsAudioStreamInfo ||
+        streamInfo is HlsVideoStreamInfo) {
+      return super.getStream(
+        streamInfo,
+        headers: headers,
+        validate: validate,
+        start: start,
+        errorCount: errorCount,
+        streamClient: streamClient,
+      );
+    }
+
+    return _streamChunkedSafe(
+      streamInfo,
+      streamClient: streamClient,
+      start: start,
+    );
+  }
+
+  Stream<List<int>> _streamChunkedSafe(
+    StreamInfo initialInfo, {
+    required StreamClient streamClient,
+    int start = 0,
+  }) async* {
+    const int chunkSize = 4 * 1024 * 1024; // 4 MB chunks avoid CDN stalls & limits
+    const int maxManifestRefreshes = 2;
+    const int maxTransientErrors = 3;
+
+    var currentInfo = initialInfo;
+    var url = initialInfo.url;
+    final totalBytes = initialInfo.size.totalBytes;
+    var bytesCount = start;
+    int manifestRefreshes = 0;
+    int transientErrors = 0;
+
+    while (!_isClosed && !closed && (totalBytes <= 0 || bytesCount < totalBytes)) {
+      final from = bytesCount;
+      final to = totalBytes > 0
+          ? ((from + chunkSize < totalBytes)
+              ? (from + chunkSize - 1)
+              : (totalBytes - 1))
+          : (from + chunkSize - 1);
+
+      http.StreamedResponse? response;
+      try {
+        final c = url.queryParameters['c'] ?? '';
+        final usesRangeHeader = c.startsWith('ANDROID');
+        final cpn = c == 'VISIONOS'
+            ? _cpnByVideoId[currentInfo.videoId.value]
+            : null;
+
+        final Uri reqUri = usesRangeHeader
+            ? url
+            : url.replace(queryParameters: {
+                ...url.queryParameters,
+                if (cpn != null && !url.queryParameters.containsKey('cpn'))
+                  'cpn': cpn,
+                'range': '$from-$to',
+              });
+
+        final req = http.Request('GET', reqUri);
+        if (usesRangeHeader) {
+          req.headers['Range'] = 'bytes=$from-$to';
+          req.headers['user-agent'] = _kYoutubeAndroidUa;
+        } else if (c == 'VISIONOS') {
+          req.headers['user-agent'] = _kVisionOsUa;
+        } else if (c == 'IOS') {
+          req.headers['user-agent'] = _kYoutubeIosUa;
+        }
+
+        response = await _rawClient
+            .send(req)
+            .timeout(const Duration(seconds: 20));
+
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          int chunkBytesReceived = 0;
+          await for (final chunk
+              in response.stream.timeout(const Duration(seconds: 25))) {
+            if (_isClosed || closed) break;
+            bytesCount += chunk.length;
+            chunkBytesReceived += chunk.length;
+            yield chunk;
+          }
+          transientErrors = 0;
+
+          if (totalBytes <= 0) {
+            break;
+          }
+          if (chunkBytesReceived == 0 && bytesCount < totalBytes) {
+            throw const SocketException('Empty stream chunk before EOF');
+          }
+          continue;
+        }
+
+        final statusCode = response.statusCode;
+        await response.stream.drain<void>().catchError((_) {});
+
+        if (statusCode == 403 || statusCode == 410) {
+          manifestRefreshes++;
+          if (manifestRefreshes > maxManifestRefreshes) {
+            throw Exception(
+              'YouTube bloqueó el acceso a este flujo (HTTP $statusCode). '
+              'Prueba otra calidad o formato.',
+            );
+          }
+
+          _visionOsVisitorData = null;
+          final refreshed = await _refreshStreamInfo(
+            streamClient,
+            currentInfo,
+            attempt: manifestRefreshes,
+          );
+          if (refreshed == null) {
+            throw Exception(
+              'El enlace de descarga expiró (HTTP $statusCode) y no pudo renovarse.',
+            );
+          }
+          currentInfo = refreshed;
+          url = refreshed.url;
+          continue;
+        }
+
+        if (statusCode == 429 || statusCode >= 500) {
+          transientErrors++;
+          if (transientErrors > maxTransientErrors) {
+            throw Exception(
+              'YouTube limitó temporalmente la descarga (HTTP $statusCode).',
+            );
+          }
+          await Future.delayed(Duration(milliseconds: 500 * transientErrors));
+          continue;
+        }
+
+        throw Exception('Error HTTP $statusCode al descargar flujo multimedia');
+      } on HttpClientClosedException {
+        break;
+      } catch (e) {
+        if (e.toString().contains('YouTube bloqueó') ||
+            e.toString().contains('expiró') ||
+            e.toString().contains('Error HTTP')) {
+          rethrow;
+        }
+        transientErrors++;
+        if (transientErrors > maxTransientErrors) {
+          rethrow;
+        }
+        await Future.delayed(Duration(milliseconds: 450 * transientErrors));
+      }
+    }
+  }
+
+  Future<StreamInfo?> _refreshStreamInfo(
+    StreamClient streamClient,
+    StreamInfo target, {
+    required int attempt,
+  }) async {
+    final clients = attempt == 1
+        ? const [
+            [kYoutubeVisionOsClient],
+            [YoutubeApiClient.androidVr],
+            [YoutubeApiClient.androidSdkless],
+          ]
+        : const [
+            [YoutubeApiClient.androidSdkless],
+            [kYoutubeVisionOsClient],
+            [YoutubeApiClient.tv],
+          ];
+
+    for (final clientList in clients) {
+      try {
+        final manifest = await streamClient
+            .getManifest(
+              target.videoId,
+              ytClients: clientList,
+              requireWatchPage: false,
+            )
+            .timeout(const Duration(seconds: 10));
+        for (final s in manifest.streams) {
+          if (s.tag == target.tag) return s;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  @override
+  void close() {
+    _isClosed = true;
+    _rawClient.close();
+    super.close();
   }
 }
 
@@ -100,7 +447,7 @@ class YoutubeExtractor {
 
   YoutubeExtractor({YoutubeExplode? yt, http.Client? httpClient})
       : _httpClient = httpClient ?? MobileHttpClient(),
-        _yt = yt ?? YoutubeExplode(httpClient: MobileYoutubeHttpClient());
+        _yt = yt ?? YoutubeExplode(httpClient: AuraYoutubeHttpClient());
 
   /// Extracts the 11-character YouTube video ID from any recognized URL format,
   /// including youtu.be short links, /shorts/, /embed/, and ?si= tracking params.
@@ -170,7 +517,6 @@ class YoutubeExtractor {
       final sdkInt = await NativePlatformService.instance.getAndroidSdkInt();
       final allowAv1InMp4 = sdkInt >= 29;
 
-      // Launch Stage 1A (oEmbed), Stage 1B (androidVr manifest) & Stage 2 (watch duration) in parallel!
       final oembedFuture = _fetchOembed(videoId.value).then((data) {
         if (data == null) return false;
         final title = (data['title'] as String?)?.trim();
@@ -222,7 +568,6 @@ class YoutubeExtractor {
         allowAv1InMp4: allowAv1InMp4,
       );
 
-      // Give oEmbed a brief moment only if snapshot still has placeholder title
       if (snapshot.title == 'Cargando video de YouTube...') {
         await oembedFuture.timeout(
           const Duration(milliseconds: 250),
@@ -245,7 +590,6 @@ class YoutubeExtractor {
       );
       onProgress(snapshot);
 
-      // Background Stage 2: finish awaiting watch details (duration) + complement streams only if needed
       final needsFallbackMerge = parsed.videoOptions.every((v) => v.height <= 360) ||
           parsed.audioOptions.length <= 1;
 
@@ -281,7 +625,6 @@ class YoutubeExtractor {
         } catch (_) {}
       }
 
-      // Let watch details finish if still pending (short bound)
       await Future.wait([
         oembedFuture,
         watchDetailsFuture,
@@ -335,8 +678,11 @@ class YoutubeExtractor {
     try {
       final videoIdStr = extractVideoId(url) ?? url.trim();
       final videoId = VideoId(videoIdStr);
-      final manifestResult = await _getFastManifest(videoId);
-      final manifest = manifestResult.manifest;
+      final manifestResult = await _getFastManifest(
+        videoId,
+        requireMuxed: forceMuxedFallback,
+      );
+      var manifest = manifestResult.manifest;
       final sdkInt = await NativePlatformService.instance.getAndroidSdkInt();
 
       if (mediaType == MediaType.audio) {
@@ -362,15 +708,19 @@ class YoutubeExtractor {
               totalBytes: selectedAudio.size.totalBytes,
               containerTotalBytes: selectedAudio.size.totalBytes,
               extension: effectiveExt,
-              // DASH mp4 audio streams use `moof` fragments; remuxing via MediaExtractor/MediaMuxer
-              // turns them into clean single-`moov` seekable `.m4a` or `.mp3` files.
               requiresAudioExtraction: !isWebm,
               requiresVideoAudioMux: false,
             );
           }
         }
 
-        // Legacy/resilience fallback: download muxed itag 18 and strip video track natively
+        // Fallback: ensure muxed itag 18 is present (visionOS doesn't emit muxed)
+        if (manifest.muxed.isEmpty) {
+          try {
+            manifest = (await _getFastManifest(videoId, requireMuxed: true))
+                .manifest;
+          } catch (_) {}
+        }
         final muxedStreams = manifest.muxed.sortByVideoQuality();
         if (muxedStreams.isNotEmpty) {
           final selectedStream = muxedStreams.firstWhere(
@@ -397,7 +747,6 @@ class YoutubeExtractor {
       }
 
       // ─── VIDEO RESOLUTION ────────────────────────────────────────────────
-      // 1. Exact video itag requested by user from progressive options UI
       if (videoItag != null) {
         final muxedMatch =
             manifest.muxed.where((s) => s.tag == videoItag).toList();
@@ -425,7 +774,6 @@ class YoutubeExtractor {
         }
       }
 
-      // 2. Match by quality + container preference
       if (!forceMuxedFallback && manifest.videoOnly.isNotEmpty) {
         final bestVideoOnly = _pickVideoOnlyStream(
           manifest,
@@ -435,7 +783,6 @@ class YoutubeExtractor {
         );
 
         if (bestVideoOnly != null) {
-          // Prefer muxed 360p directly ONLY if user explicitly asked for 360p MP4
           final is360Mp4 = quality == VideoQuality.p360 &&
               preferredVideoFormat != VideoFormatPreference.webm &&
               manifest.muxed.any((m) => m.videoResolution.height == 360);
@@ -450,7 +797,6 @@ class YoutubeExtractor {
         }
       }
 
-      // 3. Fallback to muxed (360p direct)
       final muxedStreams = manifest.muxed.sortByVideoQuality();
       if (muxedStreams.isNotEmpty) {
         final targetHeight = quality.heightPixels;
@@ -500,7 +846,7 @@ class YoutubeExtractor {
     int? requestedAudioItag,
     String? audioLanguage,
   }) {
-    final container = video.container.name.toLowerCase(); // 'mp4' or 'webm'
+    final container = video.container.name.toLowerCase();
     final isWebm = container == 'webm';
 
     AudioOnlyStreamInfo? audio;
@@ -522,11 +868,8 @@ class YoutubeExtractor {
       audioLanguage: audioLanguage,
     );
 
-    if (audio == null) {
-      // Last-resort fallback to any audioOnly or muxed
-      if (manifest.audioOnly.isNotEmpty) {
-        audio = manifest.audioOnly.withHighestBitrate();
-      }
+    if (audio == null && manifest.audioOnly.isNotEmpty) {
+      audio = manifest.audioOnly.withHighestBitrate();
     }
 
     if (audio != null) {
@@ -570,13 +913,23 @@ class YoutubeExtractor {
     return null;
   }
 
-  Future<_ManifestFetchResult> _getFastManifest(VideoId videoId) async {
-    // Try fastest, 403-free Innertube client first (`androidVr` ~300 ms)
-    for (final client in const [
-      YoutubeApiClient.androidVr,
-      YoutubeApiClient.androidSdkless,
-      YoutubeApiClient.tv,
-    ]) {
+  Future<_ManifestFetchResult> _getFastManifest(
+    VideoId videoId, {
+    bool requireMuxed = false,
+  }) async {
+    final clients = requireMuxed
+        ? const [
+            YoutubeApiClient.androidSdkless,
+            YoutubeApiClient.androidVr,
+            YoutubeApiClient.tv,
+          ]
+        : const [
+            kYoutubeVisionOsClient,
+            YoutubeApiClient.androidVr,
+            YoutubeApiClient.androidSdkless,
+            YoutubeApiClient.tv,
+          ];
+    for (final client in clients) {
       try {
         final manifest = await _yt.videos.streamsClient
             .getManifest(
@@ -584,12 +937,15 @@ class YoutubeExtractor {
               ytClients: [client],
               requireWatchPage: false,
             )
-            .timeout(const Duration(seconds: 10));
+            .timeout(const Duration(seconds: 9));
+        if (requireMuxed && manifest.muxed.isEmpty) {
+          continue;
+        }
         if (manifest.streams.isNotEmpty) {
           return _ManifestFetchResult(manifest: manifest, client: client);
         }
       } catch (e) {
-        if (client == YoutubeApiClient.tv) rethrow;
+        if (client == clients.last) rethrow;
       }
     }
     throw VideoUnavailableException('No streams available for $videoId');
@@ -604,7 +960,6 @@ class YoutubeExtractor {
         (a, b) => b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond),
       );
 
-    // Filter reliable audio tracks (exclude problematic surround EC-3/AC-3/258 for primary playback compatibility)
     final aacStreams = allAudio.where((s) {
       final c = s.container.name.toLowerCase();
       final codec = s.audioCodec.toLowerCase();
@@ -634,7 +989,6 @@ class YoutubeExtractor {
           )
         : null;
 
-    // ─── Build Detailed Audio Options ────────────────────────────────────────
     final audioOptions = <AudioStreamOption>[];
     final seenAudioKeys = <String>{};
 
@@ -691,11 +1045,9 @@ class YoutubeExtractor {
       addAudioOption(s, AudioFileFormat.webm, 'webm');
     }
 
-    // ─── Build Detailed Video Options ────────────────────────────────────────
     final videoOptions = <VideoStreamOption>[];
     final seenVideoKeys = <String>{};
 
-    // Sort adaptive video streams from highest resolution + fps + bitrate
     final sortedVideoOnly = manifest.videoOnly.sortByVideoQuality();
     for (final v in sortedVideoOnly) {
       final container = v.container.name.toLowerCase();
@@ -706,7 +1058,6 @@ class YoutubeExtractor {
         continue;
       }
 
-      // Skip odd codecs we can't cleanly mux on Android
       final isWebm = container == 'webm';
       if (isWebm && readableCodec != 'VP9' && readableCodec != 'VP8') continue;
       if (!isWebm &&
@@ -759,7 +1110,6 @@ class YoutubeExtractor {
       );
     }
 
-    // Add direct muxed options (e.g., itag 18 360p fast zero-mux download)
     for (final m in manifest.muxed.sortByVideoQuality()) {
       final height = m.videoResolution.height;
       final quality = VideoQualityExtension.fromHeight(height);
@@ -789,7 +1139,6 @@ class YoutubeExtractor {
       );
     }
 
-    // Order by height desc, then H.264/MP4 before VP9 before AV1, then FPS desc
     videoOptions.sort((a, b) {
       final h = b.height.compareTo(a.height);
       if (h != 0) return h;
@@ -887,7 +1236,6 @@ class YoutubeExtractor {
 
     final pool = heightFiltered.isNotEmpty ? heightFiltered : all;
 
-    // Group at top matching height
     final topHeight = pool.first.videoResolution.height;
     final topCandidates =
         pool.where((s) => s.videoResolution.height == topHeight).toList();
@@ -905,7 +1253,8 @@ class YoutubeExtractor {
         isH264,
         orElse: () => topCandidates.firstWhere(
           isAv1,
-          orElse: () => pool.firstWhere(isH264, orElse: () => topCandidates.first),
+          orElse: () =>
+              pool.firstWhere(isH264, orElse: () => topCandidates.first),
         ),
       );
     }
@@ -917,7 +1266,6 @@ class YoutubeExtractor {
       );
     }
 
-    // Auto: H.264 for <= 1080p, VP9 for 1440p/4K
     if (topHeight >= 1440) {
       return topCandidates.firstWhere(
         isVp9,
@@ -960,7 +1308,9 @@ class YoutubeExtractor {
       if (msg.contains('Error de red:') ||
           msg.contains('restricciones de edad') ||
           msg.contains('no está disponible') ||
-          msg.contains('ha limitado las solicitudes')) {
+          msg.contains('ha limitado las solicitudes') ||
+          msg.contains('YouTube bloqueó') ||
+          msg.contains('expiró')) {
         return e;
       }
     }

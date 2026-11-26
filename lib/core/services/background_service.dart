@@ -81,6 +81,7 @@ class DownloadForegroundTaskHandler extends TaskHandler {
       case 'enqueue':
         final rawTask = map['task'];
         if (rawTask is Map) {
+          _isStopping = false;
           final task = DownloadTask.fromJson(Map<String, dynamic>.from(rawTask));
           manager.addTask(task);
         }
@@ -91,7 +92,10 @@ class DownloadForegroundTaskHandler extends TaskHandler {
         break;
       case 'resume':
         final id = map['taskId'] as String?;
-        if (id != null) manager.resumeTask(id);
+        if (id != null) {
+          _isStopping = false;
+          manager.resumeTask(id);
+        }
         break;
       case 'cancel':
         final id = map['taskId'] as String?;
@@ -99,7 +103,10 @@ class DownloadForegroundTaskHandler extends TaskHandler {
         break;
       case 'retry':
         final id = map['taskId'] as String?;
-        if (id != null) manager.retryTask(id);
+        if (id != null) {
+          _isStopping = false;
+          manager.retryTask(id);
+        }
         break;
       case 'remove':
         final id = map['taskId'] as String?;
@@ -166,6 +173,17 @@ class DownloadForegroundTaskHandler extends TaskHandler {
       await TaskPersistenceService.instance.saveTasks(tasks);
       _broadcastTasks(tasks);
       await Future.delayed(const Duration(milliseconds: 250));
+      if (!_isStopping) return;
+      final current = _queueManager?.currentTasks ?? const <DownloadTask>[];
+      final hasActiveOrQueued = current.any(
+        (t) =>
+            t.status == DownloadStatus.downloading ||
+            t.status == DownloadStatus.queued,
+      );
+      if (hasActiveOrQueued) {
+        _isStopping = false;
+        return;
+      }
       await FlutterForegroundTask.stopService();
       return;
     }
@@ -256,6 +274,15 @@ class BackgroundService {
       FlutterForegroundTask.sendDataToTask({
         'action': 'enqueue',
         'task': task.toJson(),
+      });
+      // Guard against the narrow race where the service stopped right as data arrived.
+      Future.delayed(const Duration(milliseconds: 350), () async {
+        if (!await FlutterForegroundTask.isRunningService) {
+          await TaskPersistenceService.instance.addPendingEnqueueTask(task);
+          await startService(
+            statusText: 'Preparando descarga: ${task.title}',
+          );
+        }
       });
       return;
     }

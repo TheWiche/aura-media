@@ -1,6 +1,7 @@
 package com.mediasdownload.medias_download
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -21,12 +22,14 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 
@@ -292,6 +295,30 @@ class NativeBridge(
                 result.success(mainOpenUrlProvider?.invoke())
             }
 
+            "saveToMediaStore" -> {
+                val sourcePath = call.argument<String>("sourcePath")
+                val fileName = call.argument<String>("fileName")
+                val mediaType = call.argument<String>("mediaType") ?: "audio"
+                val relativeSubdir = call.argument<String>("relativeSubdir")
+                val mimeType = call.argument<String>("mimeType") ?: "application/octet-stream"
+                if (sourcePath.isNullOrBlank() || fileName.isNullOrBlank()) {
+                    result.success(null)
+                    return
+                }
+                backgroundExecutor.execute {
+                    val savedPath = writeViaMediaStore(
+                        sourcePath = sourcePath,
+                        fileName = fileName,
+                        mediaType = mediaType,
+                        relativeSubdir = relativeSubdir,
+                        mimeType = mimeType,
+                    )
+                    mainHandler.post {
+                        result.success(savedPath)
+                    }
+                }
+            }
+
             else -> result.notImplemented()
         }
     }
@@ -435,9 +462,9 @@ class NativeBridge(
                 @Suppress("DEPRECATION")
                 pkgInfo.versionCode.toLong()
             }
-            "${pkgInfo.versionName ?: "1.5.0"}+$code"
+            "${pkgInfo.versionName ?: "1.5.1"}+$code"
         } catch (_: Exception) {
-            "1.5.0+12"
+            "1.5.1+13"
         }
     }
 
@@ -496,80 +523,198 @@ class NativeBridge(
         }
     }
 
-    private fun extractAudioTrack(inputPath: String, outputPath: String): Boolean {
-        val extractor = MediaExtractor()
-        extractor.setDataSource(inputPath)
+    private fun writeViaMediaStore(
+        sourcePath: String,
+        fileName: String,
+        mediaType: String,
+        relativeSubdir: String?,
+        mimeType: String,
+    ): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val srcFile = File(sourcePath)
+        if (!srcFile.exists() || srcFile.length() == 0L) return null
 
-        var audioTrackIndex = -1
-        var audioFormat: MediaFormat? = null
-
-        for (i in 0 until extractor.trackCount) {
-            val format = extractor.getTrackFormat(i)
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-            if (mime.startsWith("audio/")) {
-                audioTrackIndex = i
-                audioFormat = format
-                break
-            }
-        }
-
-        if (audioTrackIndex == -1 || audioFormat == null) {
-            extractor.release()
-            return false
-        }
-
-        extractor.selectTrack(audioTrackIndex)
-
-        val outputFile = File(outputPath)
-        outputFile.parentFile?.let { parent ->
-            if (!parent.exists()) parent.mkdirs()
-        }
-        if (outputFile.exists()) {
-            outputFile.delete()
-        }
-
-        val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        val muxerAudioTrack = muxer.addTrack(audioFormat)
-        muxer.start()
-
-        val maxBufferSize = try {
-            if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+        return try {
+            val resolver = context.contentResolver
+            val defaultRel = if (mediaType == "audio") {
+                "${Environment.DIRECTORY_DOWNLOADS}/AuraMedia/Audio"
             } else {
-                64 * 1024
+                "${Environment.DIRECTORY_DOWNLOADS}/AuraMedia/Video"
+            }
+            val relPath = (relativeSubdir?.takeIf { it.isNotBlank() } ?: defaultRel)
+                .trim('/')
+
+            val collection: Uri = when {
+                relPath.startsWith(Environment.DIRECTORY_MUSIC) && mediaType == "audio" ->
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                (relPath.startsWith(Environment.DIRECTORY_MOVIES) ||
+                    relPath.startsWith(Environment.DIRECTORY_DCIM)) && mediaType == "video" ->
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                else -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            }
+
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relPath)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+
+            val itemUri = resolver.insert(collection, values) ?: return null
+            try {
+                resolver.openOutputStream(itemUri)?.use { out ->
+                    FileInputStream(srcFile).use { input ->
+                        input.copyTo(out, 64 * 1024)
+                    }
+                    out.flush()
+                } ?: return null
+
+                val clearPending = ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                }
+                resolver.update(itemUri, clearPending, null, null)
+
+                // Query physical DATA path if exposed on this Android version
+                var resolvedPath: String? = null
+                resolver.query(
+                    itemUri,
+                    arrayOf(MediaStore.MediaColumns.DATA),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                        if (idx >= 0) {
+                            resolvedPath = cursor.getString(idx)
+                        }
+                    }
+                }
+                resolvedPath ?: "${Environment.getExternalStorageDirectory().absolutePath}/$relPath/$fileName"
+            } catch (e: Exception) {
+                try {
+                    resolver.delete(itemUri, null, null)
+                } catch (_: Exception) {
+                }
+                null
             }
         } catch (_: Exception) {
-            64 * 1024
+            null
         }
-        val buffer = ByteBuffer.allocate(Math.max(maxBufferSize, 64 * 1024))
-        val bufferInfo = MediaCodec.BufferInfo()
+    }
+
+    private fun extractAudioTrack(inputPath: String, outputPath: String): Boolean {
+        val extractor = MediaExtractor()
+        var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        val outputFile = File(outputPath)
 
         try {
+            extractor.setDataSource(inputPath)
+
+            var audioTrackIndex = -1
+            var audioFormat: MediaFormat? = null
+
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    audioFormat = format
+                    break
+                }
+            }
+
+            if (audioTrackIndex == -1 || audioFormat == null) {
+                return false
+            }
+
+            extractor.selectTrack(audioTrackIndex)
+
+            outputFile.parentFile?.let { parent ->
+                if (!parent.exists()) parent.mkdirs()
+            }
+            if (outputFile.exists()) {
+                outputFile.delete()
+            }
+
+            val m = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = m
+            val muxerAudioTrack = m.addTrack(audioFormat)
+            m.start()
+            muxerStarted = true
+
+            val maxBufferSize = try {
+                if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                    audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+                } else {
+                    128 * 1024
+                }
+            } catch (_: Exception) {
+                128 * 1024
+            }
+            var buffer = ByteBuffer.allocate(maxOf(maxBufferSize, 128 * 1024))
+            val bufferInfo = MediaCodec.BufferInfo()
+            var samplesWritten = 0
+            var lastPts = -1L
+
             while (true) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val needed = extractor.sampleSize
+                    if (needed > buffer.capacity() && needed <= 4 * 1024 * 1024) {
+                        buffer = ByteBuffer.allocate(needed.toInt())
+                    }
+                }
                 val sampleSize = extractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) {
                     break
                 }
+                val rawTime = maxOf(0L, extractor.sampleTime)
+                val pts = if (rawTime <= lastPts) lastPts + 1 else rawTime
+                lastPts = pts
+
                 bufferInfo.offset = 0
                 bufferInfo.size = sampleSize
-                bufferInfo.presentationTimeUs = extractor.sampleTime
-                bufferInfo.flags = extractor.sampleFlags
-                muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
+                bufferInfo.presentationTimeUs = pts
+                bufferInfo.flags =
+                    if ((extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                        MediaCodec.BUFFER_FLAG_KEY_FRAME
+                    } else {
+                        0
+                    }
+                m.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
+                samplesWritten++
                 extractor.advance()
             }
-        } finally {
-            try {
-                muxer.stop()
-            } catch (_: Exception) {
-            }
-            try {
-                muxer.release()
-            } catch (_: Exception) {
-            }
-            extractor.release()
-        }
 
-        return true
+            if (samplesWritten == 0) {
+                return false
+            }
+
+            muxerStarted = false
+            m.stop()
+            return outputFile.exists() && outputFile.length() > 0L
+        } catch (_: Exception) {
+            if (outputFile.exists()) {
+                outputFile.delete()
+            }
+            return false
+        } finally {
+            if (muxerStarted) {
+                try {
+                    muxer?.stop()
+                } catch (_: Exception) {
+                }
+            }
+            try {
+                muxer?.release()
+            } catch (_: Exception) {
+            }
+            try {
+                extractor.release()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun muxVideoAndAudioTracks(
@@ -581,6 +726,8 @@ class NativeBridge(
         val videoExtractor = MediaExtractor()
         val audioExtractor = MediaExtractor()
         var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        val outputFile = File(outputPath)
 
         try {
             videoExtractor.setDataSource(videoPath)
@@ -619,7 +766,6 @@ class NativeBridge(
             videoExtractor.selectTrack(videoTrackIndex)
             audioExtractor.selectTrack(audioTrackIndex)
 
-            val outputFile = File(outputPath)
             outputFile.parentFile?.let { parent ->
                 if (!parent.exists()) parent.mkdirs()
             }
@@ -638,6 +784,7 @@ class NativeBridge(
             val muxerVideoTrack = m.addTrack(videoFormat)
             val muxerAudioTrack = m.addTrack(audioFormat)
             m.start()
+            muxerStarted = true
 
             val videoMax = try {
                 if (videoFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
@@ -663,6 +810,9 @@ class NativeBridge(
 
             var videoDone = false
             var audioDone = false
+            var videoSamples = 0
+            var audioSamples = 0
+            var lastAudioPts = -1L
 
             fun readSampleSafe(extractor: MediaExtractor): Int {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -682,8 +832,10 @@ class NativeBridge(
             }
 
             while (!videoDone || !audioDone) {
-                val vTime = if (videoDone) Long.MAX_VALUE else maxOf(0L, videoExtractor.sampleTime)
-                val aTime = if (audioDone) Long.MAX_VALUE else maxOf(0L, audioExtractor.sampleTime)
+                val rawVTime = if (videoDone) Long.MAX_VALUE else videoExtractor.sampleTime
+                val rawATime = if (audioDone) Long.MAX_VALUE else audioExtractor.sampleTime
+                val vTime = if (rawVTime < 0) Long.MAX_VALUE else rawVTime
+                val aTime = if (rawATime < 0) Long.MAX_VALUE else rawATime
 
                 if (!videoDone && (audioDone || vTime <= aTime)) {
                     val sampleSize = readSampleSafe(videoExtractor)
@@ -692,9 +844,15 @@ class NativeBridge(
                     } else {
                         bufferInfo.offset = 0
                         bufferInfo.size = sampleSize
-                        bufferInfo.presentationTimeUs = maxOf(0L, videoExtractor.sampleTime)
-                        bufferInfo.flags = videoExtractor.sampleFlags
+                        bufferInfo.presentationTimeUs = maxOf(0L, rawVTime)
+                        bufferInfo.flags =
+                            if ((videoExtractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                                MediaCodec.BUFFER_FLAG_KEY_FRAME
+                            } else {
+                                0
+                            }
                         m.writeSampleData(muxerVideoTrack, buffer, bufferInfo)
+                        videoSamples++
                         videoExtractor.advance()
                     }
                 } else if (!audioDone) {
@@ -702,21 +860,46 @@ class NativeBridge(
                     if (sampleSize < 0) {
                         audioDone = true
                     } else {
+                        val safeRaw = maxOf(0L, rawATime)
+                        val audioPts = if (safeRaw <= lastAudioPts) lastAudioPts + 1 else safeRaw
+                        lastAudioPts = audioPts
+
                         bufferInfo.offset = 0
                         bufferInfo.size = sampleSize
-                        bufferInfo.presentationTimeUs = maxOf(0L, audioExtractor.sampleTime)
-                        bufferInfo.flags = audioExtractor.sampleFlags
+                        bufferInfo.presentationTimeUs = audioPts
+                        bufferInfo.flags =
+                            if ((audioExtractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                                MediaCodec.BUFFER_FLAG_KEY_FRAME
+                            } else {
+                                0
+                            }
                         m.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
+                        audioSamples++
                         audioExtractor.advance()
                     }
+                } else {
+                    break
                 }
             }
 
-            return true
+            if (videoSamples == 0 || audioSamples == 0) {
+                return false
+            }
+
+            muxerStarted = false
+            m.stop()
+            return outputFile.exists() && outputFile.length() > 0L
+        } catch (_: Exception) {
+            if (outputFile.exists()) {
+                outputFile.delete()
+            }
+            return false
         } finally {
-            try {
-                muxer?.stop()
-            } catch (_: Exception) {
+            if (muxerStarted) {
+                try {
+                    muxer?.stop()
+                } catch (_: Exception) {
+                }
             }
             try {
                 muxer?.release()

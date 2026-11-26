@@ -58,7 +58,7 @@
 
 ## 📱 Descarga e instalación (APK)
 
-1. Ve a la sección de [**Releases**](https://github.com/TheWiche/aura-media/releases/latest) y descarga **`aura_v1.5.0_arm64.apk`** (optimizado para dispositivos Android ARM64 modernos).
+1. Ve a la sección de [**Releases**](https://github.com/TheWiche/aura-media/releases/latest) y descarga **`aura_v1.5.1_arm64.apk`** (optimizado para dispositivos Android ARM64 modernos).
 2. Instala el APK en tu dispositivo Android.
 3. En **Ajustes** dentro de la app podrás conceder:
    * **Permiso de almacenamiento / Acceso a todos los archivos** (necesario en Android 11+ si deseas guardar en carpetas personalizadas como `Music/` o `Movies/`).
